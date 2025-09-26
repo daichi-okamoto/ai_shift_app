@@ -222,29 +222,29 @@ const AppShell = () => {
               </button>
             </div>
 
-            <div className="mt-4 space-y-3 text-sm text-slate-600 dark:text-slate-300">
+            <div className="mt-4 space-y-3 text-sm text-slate-700 dark:text-slate-300">
               <div>
-                <p className="text-xs uppercase tracking-widest text-slate-400 dark:text-slate-500">氏名</p>
+                <p className="text-xs uppercase tracking-widest text-slate-500 dark:text-slate-500">氏名</p>
                 <p className="mt-1 text-base font-semibold text-slate-900 dark:text-slate-100">{user.name}</p>
               </div>
               <div>
-                <p className="text-xs uppercase tracking-widest text-slate-400 dark:text-slate-500">メールアドレス</p>
-                <p className="mt-1 text-base text-slate-900 dark:text-slate-100">{user.email}</p>
+                <p className="text-xs uppercase tracking-widest text-slate-500 dark:text-slate-500">メールアドレス</p>
+                <p className="mt-1 text-base text-slate-800 dark:text-slate-100">{user.email}</p>
               </div>
               <div className="grid grid-cols-2 gap-4 text-sm">
                 <div>
-                  <p className="text-xs uppercase tracking-widest text-slate-400 dark:text-slate-500">役割</p>
+                  <p className="text-xs uppercase tracking-widest text-slate-500 dark:text-slate-500">役割</p>
                   <p className="mt-1 font-semibold text-slate-800 dark:text-slate-100">{user.role_label ?? user.role}</p>
                 </div>
                 <div>
-                  <p className="text-xs uppercase tracking-widest text-slate-400 dark:text-slate-500">雇用区分</p>
-                  <p className="mt-1 text-slate-600 dark:text-slate-300">{user.employment_type}</p>
+                  <p className="text-xs uppercase tracking-widest text-slate-500 dark:text-slate-500">雇用区分</p>
+                  <p className="mt-1 text-slate-700 dark:text-slate-300">{user.employment_type}</p>
                 </div>
               </div>
               {user.organization ? (
                 <div>
-                  <p className="text-xs uppercase tracking-widest text-slate-400 dark:text-slate-500">所属組織</p>
-                  <p className="mt-1 text-slate-600 dark:text-slate-300">{user.organization.name}</p>
+                  <p className="text-xs uppercase tracking-widest text-slate-500 dark:text-slate-500">所属組織</p>
+                  <p className="mt-1 text-slate-700 dark:text-slate-300">{user.organization.name}</p>
                 </div>
               ) : null}
             </div>

@@ -20,8 +20,6 @@ return new class extends Migration
             $table->string('password');
             $table->enum('role', ['admin', 'leader', 'member'])->default('member');
             $table->enum('employment_type', ['full_time', 'part_time', 'contract']);
-            $table->boolean('can_night_shift')->default(false);
-            $table->unsignedSmallInteger('contract_hours_per_week')->nullable();
             $table->json('settings')->nullable();
             $table->rememberToken();
             $table->timestamps();

@@ -739,19 +739,53 @@ def build_model(data: Dict):
         model.AddAbsEquality(abs_off_diff, off_diff)
         abs_off_diffs.append(abs_off_diff)
 
-    coverage_penalty = 100_000
-    off_requirement_penalty = 1_000
-    day_target_penalty = 5_000
+    # Penalty weights are spaced so they respect the requested priority order.
+    coverage_penalty = 50_000_000
+    off_penalty_weights = {
+        "full_time": 600_000,
+        "part_time": 450_000,
+        "contract": 350_000,
+    }
+    default_off_penalty = 400_000
+    day_target_penalty = 1_000
+    workload_balance_penalty = 20
+    off_balance_penalty = 10
 
-    objective_terms = [coverage_penalty * sum(shortage_vars.values())]
+    objective_terms = []
+
+    if shortage_vars:
+        objective_terms.append(coverage_penalty * sum(shortage_vars.values()))
+
     if off_slack_vars:
-        objective_terms.append(off_requirement_penalty * sum(off_slack_vars))
+        off_penalty_terms = []
+        for u, slack in enumerate(off_slack_vars):
+            required_off = member_off_requirements[u]
+            if required_off <= 0:
+                continue
+
+            employment_type = members[u].employment_type
+            penalty_weight = off_penalty_weights.get(
+                employment_type,
+                default_off_penalty,
+            )
+            off_penalty_terms.append(penalty_weight * slack)
+
+        if off_penalty_terms:
+            objective_terms.append(sum(off_penalty_terms))
+
     if day_shortfall_vars:
         objective_terms.append(day_target_penalty * sum(day_shortfall_vars.values()))
-    if balance_workload:
-        objective_terms.append(10 * sum(abs_work_diffs) + 5 * sum(abs_off_diffs))
 
-    model.Minimize(sum(objective_terms))
+    if balance_workload:
+        objective_terms.append(
+            workload_balance_penalty * sum(abs_work_diffs)
+            + off_balance_penalty * sum(abs_off_diffs)
+        )
+
+    if not objective_terms:
+        model.Minimize(0)
+    else:
+        model.Minimize(sum(objective_terms))
 
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = time_limit

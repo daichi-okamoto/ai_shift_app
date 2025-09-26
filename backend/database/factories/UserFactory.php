@@ -38,8 +38,6 @@ class UserFactory extends Factory
             'remember_token' => Str::random(10),
             'role' => fake()->randomElement(['admin', 'leader', 'member']),
             'employment_type' => fake()->randomElement(['full_time', 'part_time', 'contract']),
-            'can_night_shift' => fake()->boolean(70),
-            'contract_hours_per_week' => fake()->numberBetween(24, 40),
             'settings' => [
                 'color' => fake()->hexColor(),
             ],

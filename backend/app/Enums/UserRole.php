@@ -12,8 +12,8 @@ enum UserRole: string
     {
         return match ($this) {
             self::Admin => '管理者',
-            self::Leader => 'チームリーダー',
-            self::Member => 'メンバー',
+            self::Leader => '編集者',
+            self::Member => '一般',
         };
     }
 
@@ -29,4 +29,3 @@ enum UserRole: string
         };
     }
 }
-

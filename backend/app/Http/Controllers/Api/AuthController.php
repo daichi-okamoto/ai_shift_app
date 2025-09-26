@@ -23,16 +23,30 @@ class AuthController extends Controller
         $credentials = $request->validate([
             'email' => ['required', 'email'],
             'password' => ['required', 'string'],
+            'organization_code' => ['required', 'string'],
         ]);
+
+        $organizationCode = strtoupper($credentials['organization_code']);
+
+        $organization = Organization::query()
+            ->whereRaw('UPPER(code) = ?', [$organizationCode])
+            ->first();
+
+        if (! $organization) {
+            throw ValidationException::withMessages([
+                'organization_code' => '指定された事業所コードは存在しません。',
+            ]);
+        }
 
         /** @var User|null $user */
         $user = User::with(['organization', 'memberships.unit', 'allowedShiftTypes'])
             ->where('email', $credentials['email'])
+            ->where('organization_id', $organization->id)
             ->first();
 
         if (! $user || ! Hash::check($credentials['password'], $user->password)) {
             throw ValidationException::withMessages([
-                'email' => 'The provided credentials are incorrect.',
+                'email' => '入力された認証情報が正しくありません。',
             ]);
         }
 
@@ -76,12 +90,6 @@ class AuthController extends Controller
             ->first();
 
         if (! $organization) {
-            if ($data['role'] !== UserRole::Admin->value) {
-                throw ValidationException::withMessages([
-                    'organization_code' => '指定された事業所コードは存在しません。',
-                ]);
-            }
-
             if (empty($data['organization_name'])) {
                 throw ValidationException::withMessages([
                     'organization_name' => '新規事業所を作成する場合は名称を入力してください。',
@@ -103,25 +111,16 @@ class AuthController extends Controller
             ]);
         }
 
+        $this->ensureDefaultShiftTypes($organization);
+
         $user = User::create([
             'organization_id' => $organization->id,
             'name' => $data['name'],
             'email' => $data['email'],
             'password' => Hash::make($data['password']),
-            'role' => $data['role'],
-            'employment_type' => $data['employment_type'],
-            'can_night_shift' => (bool) ($data['can_night_shift'] ?? false),
-            'contract_hours_per_week' => $data['contract_hours_per_week'] ?? null,
+            'role' => UserRole::Admin->value,
+            'employment_type' => 'full_time',
         ]);
-
-        $defaultShiftTypeIds = ShiftType::query()
-            ->where('organization_id', $organization->id)
-            ->pluck('id')
-            ->all();
-
-        if (! empty($defaultShiftTypeIds)) {
-            $user->allowedShiftTypes()->sync($defaultShiftTypeIds);
-        }
 
         $user->load(['organization', 'memberships.unit', 'allowedShiftTypes']);
 
@@ -150,5 +149,37 @@ class AuthController extends Controller
         $user->save();
 
         return response()->noContent();
+    }
+
+    private function ensureDefaultShiftTypes(Organization $organization): void
+    {
+        $existingCount = ShiftType::query()
+            ->where('organization_id', $organization->id)
+            ->count();
+
+        if ($existingCount > 0) {
+            return;
+        }
+
+        $definitions = [
+            ['code' => 'EARLY', 'name' => '早番', 'start_at' => '07:00', 'end_at' => '15:45', 'break' => 60, 'is_default' => true],
+            ['code' => 'DAY', 'name' => '日勤', 'start_at' => '08:30', 'end_at' => '17:15', 'break' => 60, 'is_default' => true],
+            ['code' => 'LATE', 'name' => '遅番', 'start_at' => '11:45', 'end_at' => '20:30', 'break' => 60, 'is_default' => true],
+            ['code' => 'NIGHT', 'name' => '夜勤', 'start_at' => '16:30', 'end_at' => '09:30', 'break' => 90, 'is_default' => true],
+            ['code' => 'NIGHT_AFTER', 'name' => '夜勤明け', 'start_at' => '09:30', 'end_at' => '13:30', 'break' => 0, 'is_default' => false],
+            ['code' => 'OFF', 'name' => '休み', 'start_at' => '00:00', 'end_at' => '23:59', 'break' => 0, 'is_default' => false],
+        ];
+
+        foreach ($definitions as $definition) {
+            ShiftType::create([
+                'organization_id' => $organization->id,
+                'name' => $definition['name'],
+                'code' => $definition['code'],
+                'start_at' => $definition['start_at'],
+                'end_at' => $definition['end_at'],
+                'break_minutes' => $definition['break'],
+                'is_default' => $definition['is_default'],
+            ]);
+        }
     }
 }

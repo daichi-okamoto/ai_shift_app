@@ -11,8 +11,6 @@ export type EmployeePayload = {
   email: string
   role: 'admin' | 'leader' | 'member'
   employment_type: 'full_time' | 'part_time' | 'contract'
-  can_night_shift: boolean
-  contract_hours_per_week: number | null
   allowed_shift_type_ids: number[]
   password?: string
   memberships: EmployeeMembershipInput[]

@@ -85,7 +85,6 @@ class DatabaseSeeder extends Seeder
                 'name' => '管理者 太郎',
                 'role' => 'admin',
                 'employment_type' => 'full_time',
-                'can_night_shift' => true,
                 'password' => 'password',
             ]
         );
@@ -101,7 +100,6 @@ class DatabaseSeeder extends Seeder
                     'name' => $unit->code . ' リーダー',
                     'role' => 'leader',
                     'employment_type' => 'full_time',
-                    'can_night_shift' => true,
                 ])->create();
             $leader->allowedShiftTypes()->sync($defaultShiftTypeIds);
 
@@ -111,7 +109,6 @@ class DatabaseSeeder extends Seeder
                 ->state([
                     'role' => 'member',
                     'employment_type' => 'full_time',
-                    'can_night_shift' => true,
                 ])->create();
 
             foreach ($fullTimeStaff as $member) {
@@ -128,7 +125,6 @@ class DatabaseSeeder extends Seeder
                 ->state([
                     'role' => 'member',
                     'employment_type' => 'part_time',
-                    'can_night_shift' => false,
                 ])->create();
 
             foreach ($partTimeStaff as $member) {
@@ -262,8 +258,6 @@ class DatabaseSeeder extends Seeder
                 'name' => '一般ユーザー 花子',
                 'role' => 'member',
                 'employment_type' => 'part_time',
-                'can_night_shift' => false,
-                'contract_hours_per_week' => 24,
                 'password' => 'password',
             ],
         );

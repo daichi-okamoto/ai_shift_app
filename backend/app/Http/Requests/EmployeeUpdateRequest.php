@@ -42,8 +42,6 @@ class EmployeeUpdateRequest extends FormRequest
             ],
             'role' => ['required', Rule::in(['admin', 'leader', 'member'])],
             'employment_type' => ['required', Rule::in(['full_time', 'part_time', 'contract'])],
-            'can_night_shift' => ['sometimes', 'boolean'],
-            'contract_hours_per_week' => ['nullable', 'integer', 'between:0,168'],
             'password' => ['nullable', 'string', 'min:8'],
             'allowed_shift_type_ids' => ['sometimes', 'array'],
             'allowed_shift_type_ids.*' => [

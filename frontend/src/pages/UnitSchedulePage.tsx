@@ -1,4 +1,4 @@
-import type { MouseEvent as ReactMouseEvent } from 'react'
+import type { ChangeEvent, MouseEvent as ReactMouseEvent, SVGProps } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, useParams } from 'react-router-dom'
@@ -24,6 +24,24 @@ const shiftLabelMap: Record<string, string> = {
   NIGHT: '夜勤',
   NIGHT_AFTER: '夜勤明け',
   OFF: '休み',
+  CUSTOM: 'カスタム',
+  UNASSIGNED: '未割当',
+}
+
+const SHIFT_SUMMARY_ORDER = ['EARLY', 'DAY', 'LATE', 'NIGHT', 'OFF', 'CUSTOM', 'UNASSIGNED'] as const
+const WORK_SHIFT_CODES = ['EARLY', 'DAY', 'LATE', 'NIGHT'] as const
+type WorkShiftCode = (typeof WORK_SHIFT_CODES)[number]
+const SHORT_SHIFT_LABELS: Record<WorkShiftCode, string> = {
+  EARLY: '早',
+  DAY: '日',
+  LATE: '遅',
+  NIGHT: '夜',
+}
+
+const EMPLOYMENT_TYPE_LABELS: Record<string, string> = {
+  full_time: '正社員',
+  part_time: 'パート',
+  contract: '契約',
 }
 
 const normalizeTime = (time?: string | null) => {
@@ -55,29 +73,67 @@ const formatShiftTimes = (code?: string | null, start?: string | null, end?: str
   return formatTimeRange(start, end)
 }
 
+const timeToMinutes = (value?: string | null): number | null => {
+  if (!value) return null
+  const [hoursRaw, minutesRaw = '0'] = value.split(':')
+  const hours = Number(hoursRaw)
+  const minutes = Number(minutesRaw)
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
+    return null
+  }
+  return hours * 60 + minutes
+}
+
+const inferWorkShiftFromTimes = (start?: string | null, end?: string | null): WorkShiftCode | null => {
+  const startMinutes = timeToMinutes(start)
+  const endMinutes = timeToMinutes(end)
+
+  if (startMinutes === null || endMinutes === null) {
+    return null
+  }
+
+  if (endMinutes <= startMinutes) {
+    return 'NIGHT'
+  }
+
+  if (startMinutes <= 7 * 60 + 30) {
+    return 'EARLY'
+  }
+
+  if (startMinutes >= 21 * 60 || endMinutes >= 22 * 60) {
+    return 'NIGHT'
+  }
+
+  if (startMinutes >= 13 * 60 || endMinutes >= 20 * 60) {
+    return 'LATE'
+  }
+
+  return 'DAY'
+}
+
 type DayType = 'weekday' | 'saturday' | 'sunday' | 'holiday'
 
 const DAY_STYLES: Record<DayType, { headerBg: string; headerText: string; columnBg: string; buttonRing: string }> = {
   weekday: {
-    headerBg: 'bg-white/60 backdrop-blur dark:bg-slate-900/80',
+    headerBg: 'bg-slate-50/70 backdrop-blur dark:bg-slate-900/80',
     headerText: 'text-slate-500 dark:text-slate-200',
     columnBg: 'bg-white/40 backdrop-blur dark:bg-slate-900/45',
     buttonRing: 'ring-0 ring-transparent dark:ring-1 dark:ring-slate-700/60 dark:ring-offset-1 dark:ring-offset-slate-900',
   },
   saturday: {
-    headerBg: 'bg-sky-100/70 backdrop-blur dark:bg-sky-500/80',
+    headerBg: 'bg-sky-100/70 backdrop-blur dark:bg-sky-500/50',
     headerText: 'text-sky-700 dark:text-sky-200',
     columnBg: 'bg-sky-50/60 backdrop-blur dark:bg-sky-500/15',
     buttonRing: 'ring-1 ring-sky-200 ring-offset-1 ring-offset-white dark:ring-sky-500/50 dark:ring-offset-slate-900',
   },
   sunday: {
-    headerBg: 'bg-rose-100/70 backdrop-blur dark:bg-rose-500/80',
-    headerText: 'text-rose-700 dark:text-rose-200',
-    columnBg: 'bg-rose-50/60 backdrop-blur dark:bg-rose-500/15',
-    buttonRing: 'ring-1 ring-rose-200 ring-offset-1 ring-offset-white dark:ring-rose-500/50 dark:ring-offset-slate-900',
+    headerBg: 'bg-violet-100/70 backdrop-blur dark:bg-violet-500/45',
+    headerText: 'text-violet-700 dark:text-violet-200',
+    columnBg: 'bg-violet-50/60 backdrop-blur dark:bg-violet-500/15',
+    buttonRing: 'ring-1 ring-violet-200 ring-offset-1 ring-offset-white dark:ring-violet-500/50 dark:ring-offset-slate-900',
   },
   holiday: {
-    headerBg: 'bg-amber-100/70 backdrop-blur dark:bg-amber-500/80',
+    headerBg: 'bg-amber-100/70 backdrop-blur dark:bg-amber-500/50',
     headerText: 'text-amber-700 dark:text-amber-200',
     columnBg: 'bg-amber-50/60 backdrop-blur dark:bg-amber-500/15',
     buttonRing: 'ring-1 ring-amber-200 ring-offset-1 ring-offset-white dark:ring-amber-500/50 dark:ring-offset-slate-900',
@@ -158,6 +214,98 @@ const SHIFT_TAG_STYLES: Record<string, string> = {
     'border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300',
 }
 
+const FAIRNESS_TAG_STYLES: Record<
+  'total' | 'night' | 'weekend' | 'holiday',
+  { container: string; label: string }
+> = {
+  total: {
+    container:
+      'inline-flex items-center rounded-full bg-emerald-100/80 px-3 py-1 text-xs font-semibold shadow-sm dark:bg-emerald-500/20',
+    label: 'text-emerald-700 dark:text-emerald-200',
+  },
+  night: {
+    container:
+      'inline-flex items-center rounded-full bg-slate-200/80 px-3 py-1 text-[11px] font-semibold shadow-sm dark:bg-slate-700/40',
+    label: 'text-slate-800 dark:text-slate-100',
+  },
+  weekend: {
+    container:
+      'inline-flex items-center rounded-full bg-sky-100/80 px-3 py-1 text-[11px] font-semibold shadow-sm dark:bg-sky-500/20',
+    label: 'text-sky-700 dark:text-sky-200',
+  },
+  holiday: {
+    container:
+      'inline-flex items-center rounded-full bg-amber-100/80 px-3 py-1 text-[11px] font-semibold shadow-sm dark:bg-amber-500/20',
+    label: 'text-amber-700 dark:text-amber-200',
+  },
+}
+
+type AutoGenerateOptions = {
+  preserveExisting: boolean
+  enforceNightAfterRest: boolean
+  enforceNightRestPairing: boolean
+  forbidLateToEarly: boolean
+  limitFulltimeRepeat: boolean
+  balanceWorkload: boolean
+  maxNightsPerMember: number
+  maxConsecutiveWorkdays: number
+  desiredDayHeadcount: number
+  minOffDaysFullTime: number
+  minOffDaysPartTime: number
+  timeLimit: number
+}
+
+const BASE_AUTO_GENERATE_OPTIONS: AutoGenerateOptions = {
+  preserveExisting: true,
+  enforceNightAfterRest: true,
+  enforceNightRestPairing: true,
+  forbidLateToEarly: true,
+  limitFulltimeRepeat: true,
+  balanceWorkload: true,
+  maxNightsPerMember: 7,
+  maxConsecutiveWorkdays: 5,
+  desiredDayHeadcount: 1,
+  minOffDaysFullTime: 8,
+  minOffDaysPartTime: 10,
+  timeLimit: 20,
+}
+
+const ExpandIcon = (props: SVGProps<SVGSVGElement>) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.8"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+    {...props}
+  >
+    <polyline points="9 4 4 4 4 9" />
+    <line x1="4" y1="4" x2="10" y2="10" />
+    <polyline points="15 20 20 20 20 15" />
+    <line x1="14" y1="14" x2="20" y2="20" />
+  </svg>
+)
+
+const CompressIcon = (props: SVGProps<SVGSVGElement>) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.8"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+    {...props}
+  >
+    <polyline points="9 9 4 9 4 4" />
+    <line x1="9" y1="9" x2="4" y2="4" />
+    <polyline points="15 15 20 15 20 20" />
+    <line x1="15" y1="15" x2="20" y2="20" />
+  </svg>
+)
+
 const resolveShiftStyleKey = (code?: string | null): ShiftStyleKey => {
   switch (code) {
     case 'EARLY':
@@ -175,6 +323,14 @@ const resolveShiftStyleKey = (code?: string | null): ShiftStyleKey => {
     default:
       return 'custom'
   }
+}
+
+const resolveSummaryStyle = (code: string): ShiftStyleKey => {
+  if (code === 'UNASSIGNED') {
+    return 'unassigned'
+  }
+
+  return resolveShiftStyleKey(code)
 }
 
 const getDayType = (date: Date, hasHoliday: boolean): DayType => {
@@ -238,6 +394,11 @@ type PendingValue =
   | { kind: 'off' }
   | { kind: 'custom'; start_at: string; end_at: string }
 
+type CoverageShortageDetail = {
+  totalMissing: number
+  details: Array<{ shift: WorkShiftCode; missing: number }>
+}
+
 type OptimizerAssignmentEntry = {
   date?: string
   shifts?: Record<string, { user_id?: number | string; start_at?: string | null; end_at?: string | null }>
@@ -287,12 +448,13 @@ const UnitSchedulePage = () => {
     }
   }, [anchorDate, viewMode])
 
-  const autoGenerateRange = useMemo(() => {
+  const autoGenerateRange = useMemo((): { type: 'day' | 'week'; start: string; end: string } | null => {
     const anchor = parseDate(anchorDate)
     if (viewMode === 'week') {
       const start = startOfWeek(anchor)
       const end = addDays(start, 6)
       return {
+        type: 'week',
         start: formatDate(start),
         end: formatDate(end),
       }
@@ -300,10 +462,94 @@ const UnitSchedulePage = () => {
 
     if (viewMode === 'day') {
       const formatted = formatDate(anchor)
-      return { start: formatted, end: formatted }
+      return { type: 'day', start: formatted, end: formatted }
     }
 
     return null
+  }, [anchorDate, viewMode])
+
+  const anchorInputValue = useMemo(() => {
+    const parsed = parseDate(anchorDate)
+    if (Number.isNaN(parsed.getTime())) {
+      return anchorDate
+    }
+    if (viewMode === 'week') {
+      return formatDate(startOfWeek(parsed))
+    }
+    return formatDate(parsed)
+  }, [anchorDate, viewMode])
+
+  const navigationLabels = useMemo(() => {
+    switch (viewMode) {
+      case 'day':
+        return { prev: '前日', next: '翌日' }
+      case 'week':
+        return { prev: '前週', next: '翌週' }
+      case 'month':
+      default:
+        return { prev: '前月', next: '翌月' }
+    }
+  }, [viewMode])
+
+  const autoGenerateRangeLabel = useMemo(() => {
+    if (autoGenerateRange) {
+      return autoGenerateRange.type === 'day'
+        ? autoGenerateRange.start
+        : `${autoGenerateRange.start} 〜 ${autoGenerateRange.end}`
+    }
+
+    const monthAnchor = parseDate(`${monthKey}-01`)
+    const start = formatDate(firstDayOfMonth(monthAnchor))
+    const end = formatDate(lastDayOfMonth(monthAnchor))
+    return `${start} 〜 ${end}`
+  }, [autoGenerateRange, monthKey])
+  const autoGenerateViewLabel = autoGenerateRange?.type === 'week'
+    ? '週表示'
+    : autoGenerateRange?.type === 'day'
+      ? '日表示'
+      : '月表示'
+  const autoGenerateRangeHeading = autoGenerateRange?.type === 'day' ? '対象日' : '対象期間'
+
+  const { summaryStart, summaryEnd, summaryDates } = useMemo(() => {
+    const anchor = parseDate(anchorDate)
+
+    const buildDates = (start: Date, end: Date) => {
+      const dates: string[] = []
+      let cursor = new Date(start)
+      while (cursor <= end) {
+        dates.push(formatDate(cursor))
+        cursor = addDays(cursor, 1)
+      }
+      return dates
+    }
+
+    if (viewMode === 'day') {
+      const start = new Date(anchor)
+      const end = new Date(anchor)
+      return {
+        summaryStart: start,
+        summaryEnd: end,
+        summaryDates: [formatDate(start)],
+      }
+    }
+
+    if (viewMode === 'week') {
+      const start = startOfWeek(anchor)
+      const end = addDays(start, 6)
+      return {
+        summaryStart: start,
+        summaryEnd: end,
+        summaryDates: buildDates(start, end),
+      }
+    }
+
+    const start = firstDayOfMonth(anchor)
+    const end = lastDayOfMonth(anchor)
+    return {
+      summaryStart: start,
+      summaryEnd: end,
+      summaryDates: buildDates(start, end),
+    }
   }, [anchorDate, viewMode])
 
   const { data, isLoading, isError } = useUnitShiftsQuery({
@@ -318,6 +564,32 @@ const UnitSchedulePage = () => {
     () => (isValidUnitId ? unitsData?.data.find((unit) => unit.id === unitId) : undefined),
     [isValidUnitId, unitsData, unitId],
   )
+  const coverageDayDefault = useMemo(() => {
+    const raw = Number(unitDetail?.coverage_requirements?.day ?? 1)
+    if (Number.isNaN(raw) || raw <= 0) {
+      return 1
+    }
+    return Math.max(1, Math.round(raw))
+  }, [unitDetail?.coverage_requirements?.day])
+
+  const autoGenerateDefaults = useMemo<AutoGenerateOptions>(() => {
+    const base: AutoGenerateOptions = {
+      ...BASE_AUTO_GENERATE_OPTIONS,
+      desiredDayHeadcount: coverageDayDefault,
+    }
+
+    if (autoGenerateRange?.type === 'week') {
+      base.minOffDaysFullTime = 2
+      base.minOffDaysPartTime = 2
+      base.maxNightsPerMember = 1
+    } else if (autoGenerateRange?.type === 'day') {
+      base.minOffDaysFullTime = 0
+      base.minOffDaysPartTime = 0
+      base.maxNightsPerMember = 1
+    }
+
+    return base
+  }, [autoGenerateRange?.type, coverageDayDefault])
   const members = useMemo<UnitMember[]>(() => {
     const metaMembers = ((data?.meta as { members?: UnitMember[] } | undefined)?.members ?? []) as UnitMember[]
     if (metaMembers.length > 0) {
@@ -358,6 +630,30 @@ const UnitSchedulePage = () => {
     })
     return map
   }, [shiftTypes])
+  const coverageRequirements = useMemo<Record<WorkShiftCode, number>>(() => {
+    const raw = unitDetail?.coverage_requirements ?? {}
+    const parseCount = (value: unknown): number => {
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        return Math.max(0, Math.floor(value))
+      }
+      if (typeof value === 'string') {
+        const parsed = Number(value)
+        if (!Number.isNaN(parsed)) {
+          return Math.max(0, Math.floor(parsed))
+        }
+      }
+      return 0
+    }
+
+    const normalizedRaw = raw as Record<string, unknown>
+
+    return {
+      EARLY: parseCount(normalizedRaw.early),
+      DAY: parseCount(normalizedRaw.day),
+      LATE: parseCount(normalizedRaw.late),
+      NIGHT: parseCount(normalizedRaw.night),
+    }
+  }, [unitDetail])
   const [activeCell, setActiveCell] = useState<ActiveCell | null>(null)
   const [pendingAssignments, setPendingAssignments] = useState<Record<string, PendingValue>>({})
   const [customInputs, setCustomInputs] = useState<Record<string, { start: string; end: string }>>({})
@@ -371,31 +667,30 @@ const UnitSchedulePage = () => {
     Array<{ date: string; shift_code: string; missing: number }>
   >([])
   const [latestConflicts, setLatestConflicts] = useState<Array<Record<string, unknown>>>([])
-  const [autoGenOptions, setAutoGenOptions] = useState({
-    preserveExisting: true,
-    enforceNightAfterRest: true,
-    forbidLateToEarly: true,
-    limitFulltimeRepeat: true,
-    balanceWorkload: true,
-    maxNightsPerMember: 7,
-    maxConsecutiveWorkdays: 5,
-    desiredDayHeadcount: 1,
-    enforceNightRestPairing: true,
-    minOffDaysFullTime: 8,
-    minOffDaysPartTime: 10,
-    timeLimit: 20,
-  })
+  const [autoGenOptions, setAutoGenOptions] = useState<AutoGenerateOptions>(
+    () => ({ ...BASE_AUTO_GENERATE_OPTIONS }),
+  )
+  const [isFullscreen, setIsFullscreen] = useState(false)
   useEffect(() => {
-    if (!unitDetail) return
-    const configuredDay = Number(unitDetail.coverage_requirements?.day ?? 1)
-    if (Number.isNaN(configuredDay) || configuredDay <= 0) return
-    const normalized = Math.max(1, Math.round(configuredDay))
-
+    setAutoGenOptions((prev) =>
+      prev.desiredDayHeadcount === coverageDayDefault
+        ? prev
+        : {
+            ...prev,
+            desiredDayHeadcount: coverageDayDefault,
+          },
+    )
+  }, [coverageDayDefault])
+  useEffect(() => {
+    if (!showAutoGenerate) return
     setAutoGenOptions((prev) => ({
       ...prev,
-      desiredDayHeadcount: normalized,
+      desiredDayHeadcount: autoGenerateDefaults.desiredDayHeadcount,
+      minOffDaysFullTime: autoGenerateDefaults.minOffDaysFullTime,
+      minOffDaysPartTime: autoGenerateDefaults.minOffDaysPartTime,
+      maxNightsPerMember: autoGenerateDefaults.maxNightsPerMember,
     }))
-  }, [unitDetail?.id, unitDetail?.coverage_requirements?.day])
+  }, [showAutoGenerate, autoGenerateDefaults])
   const menuRef = useRef<HTMLDivElement | null>(null)
 
   const batchUpdateMutation = useBatchUpdateShifts(unitId)
@@ -416,7 +711,14 @@ const UnitSchedulePage = () => {
       left = viewportRight - menuWidth - 16
     }
     left = Math.max(viewportLeft + 16, left)
-    const top = rect.bottom + window.scrollY + 8
+    const viewportTop = window.scrollY
+    const viewportBottom = window.scrollY + window.innerHeight
+    const menuHeightEstimate = 360
+    let top = rect.bottom + window.scrollY + 8
+    if (top + menuHeightEstimate > viewportBottom - 12) {
+      const candidateTop = rect.top + window.scrollY - menuHeightEstimate - 12
+      top = Math.max(viewportTop + 16, candidateTop)
+    }
     setMenuPosition((prev) => {
       if (prev && Math.abs(prev.left - left) < 0.5 && Math.abs(prev.top - top) < 0.5 && Math.abs(prev.width - menuWidth) < 0.5) {
         return prev
@@ -430,6 +732,18 @@ const UnitSchedulePage = () => {
     setMenuPosition(null)
     menuAnchorRef.current = null
   }, [])
+
+  const updateAnchorDate = useCallback(
+    (next: Date | string) => {
+      const formatted = typeof next === 'string' ? next : formatDate(next)
+      if (!formatted) return
+      setAnchorDate(formatted)
+      clearActiveCell()
+      setPendingAssignments({})
+      setCustomInputs({})
+    },
+    [clearActiveCell],
+  )
 
   const getDeleteRangeInfo = () => {
     if (viewMode === 'day') {
@@ -523,6 +837,186 @@ const UnitSchedulePage = () => {
     return map
   }, [rangeStartObj, rangeEndObj])
 
+  const resolveCellCode = useCallback(
+    (memberId: number, date: string): string => {
+      const key = buildKey(memberId, date)
+      const pending = pendingAssignments[key]
+
+      if (pending) {
+        if (pending.kind === 'shift-type') {
+          const code = pending.shiftType.code?.toUpperCase()
+          return code && code.length > 0 ? code : 'CUSTOM'
+        }
+
+        if (pending.kind === 'off') {
+          return 'OFF'
+        }
+
+        if (pending.kind === 'custom') {
+          return 'CUSTOM'
+        }
+      }
+
+      const entry = assignmentMap[key]
+      if (!entry) {
+        return 'UNASSIGNED'
+      }
+
+      const code = entry.shift.shift_type?.code
+      if (code && code.length > 0) {
+        return code.toUpperCase()
+      }
+
+      return 'CUSTOM'
+    },
+    [assignmentMap, pendingAssignments],
+  )
+  const coverageShortages = useMemo<Record<string, CoverageShortageDetail>>(() => {
+    const shortages: Record<string, CoverageShortageDetail> = {}
+    const hasRequirement = WORK_SHIFT_CODES.some((code) => (coverageRequirements[code] ?? 0) > 0)
+
+    if (!hasRequirement || !dateRange.length || !members.length) {
+      return shortages
+    }
+
+    dateRange.forEach((date) => {
+      const counts: Record<WorkShiftCode, number> = {
+        EARLY: 0,
+        DAY: 0,
+        LATE: 0,
+        NIGHT: 0,
+      }
+
+      members.forEach((member) => {
+        const key = buildKey(member.id, date)
+        const baseCode = resolveCellCode(member.id, date)
+        const normalized = baseCode?.toUpperCase() ?? ''
+        let coverageCode: WorkShiftCode | null = null
+
+        if ((WORK_SHIFT_CODES as readonly string[]).includes(normalized)) {
+          coverageCode = normalized as WorkShiftCode
+        } else if (normalized === 'CUSTOM') {
+          const pending = pendingAssignments[key]
+          if (pending?.kind === 'shift-type') {
+            const pendingCode = pending.shiftType.code?.toUpperCase()
+            if (pendingCode && (WORK_SHIFT_CODES as readonly string[]).includes(pendingCode)) {
+              coverageCode = pendingCode as WorkShiftCode
+            }
+          } else if (pending?.kind === 'custom') {
+            coverageCode = 'DAY'
+          }
+
+          if (!coverageCode) {
+            const mapEntry = assignmentMap[key]
+            const typeCode = mapEntry?.shift.shift_type?.code?.toUpperCase()
+            if (typeCode && (WORK_SHIFT_CODES as readonly string[]).includes(typeCode)) {
+              coverageCode = typeCode as WorkShiftCode
+            } else if (mapEntry) {
+              coverageCode = inferWorkShiftFromTimes(mapEntry.shift.start_at, mapEntry.shift.end_at)
+            }
+          }
+        }
+
+        if (coverageCode) {
+          counts[coverageCode] += 1
+        }
+      })
+
+      const details: CoverageShortageDetail['details'] = []
+      let totalMissing = 0
+
+      WORK_SHIFT_CODES.forEach((shiftCode) => {
+        const required = coverageRequirements[shiftCode] ?? 0
+        if (required <= 0) {
+          return
+        }
+        const missing = required - counts[shiftCode]
+        if (missing > 0) {
+          totalMissing += missing
+          details.push({ shift: shiftCode, missing })
+        }
+      })
+
+      if (details.length > 0) {
+        shortages[date] = {
+          totalMissing,
+          details,
+        }
+      }
+    })
+
+    return shortages
+  }, [assignmentMap, coverageRequirements, dateRange, members, pendingAssignments, resolveCellCode])
+
+  const memberShiftCounts = useMemo(() => {
+    const perMember: Record<number, Record<string, number>> = {}
+
+    const ensureBucket = (memberId: number) => {
+      if (!perMember[memberId]) {
+        perMember[memberId] = {}
+      }
+      return perMember[memberId]
+    }
+
+    const increment = (memberId: number, code: string) => {
+      const normalizedCode = code || 'UNASSIGNED'
+      const bucket = ensureBucket(memberId)
+      bucket[normalizedCode] = (bucket[normalizedCode] ?? 0) + 1
+    }
+
+    summaryDates.forEach((date) => {
+      members.forEach((member) => {
+        increment(member.id, resolveCellCode(member.id, date))
+      })
+    })
+
+    return perMember
+  }, [members, resolveCellCode, summaryDates])
+
+  const memberFairnessPoints = useMemo(() => {
+    const totals: Record<number, { total: number; night: number; weekend: number; holiday: number }> = {}
+
+    const ensure = (memberId: number) => {
+      if (!totals[memberId]) {
+        totals[memberId] = { total: 0, night: 0, weekend: 0, holiday: 0 }
+      }
+      return totals[memberId]
+    }
+
+    summaryDates.forEach((date) => {
+      const parsedDate = parseDate(date)
+      const day = parsedDate.getDay()
+      const isWeekend = day === 0 || day === 6
+      const isHoliday = holidaysMap.has(date)
+
+      members.forEach((member) => {
+        const code = resolveCellCode(member.id, date)
+        if (!code || code === 'UNASSIGNED' || code === 'OFF' || code === 'NIGHT_AFTER') {
+          return
+        }
+
+        const bucket = ensure(member.id)
+
+        if (code === 'NIGHT') {
+          bucket.night += 3
+          bucket.total += 3
+        }
+
+        if (isWeekend) {
+          bucket.weekend += 1
+          bucket.total += 1
+        }
+
+        if (isHoliday) {
+          bucket.holiday += 1
+          bucket.total += 1
+        }
+      })
+    })
+
+    return totals
+  }, [holidaysMap, members, resolveCellCode, summaryDates])
+
   const describeConflict = (conflict: Record<string, unknown>): string => {
     const type = (conflict.type as string | undefined) ?? 'unknown'
     const shiftCode = typeof conflict.shift_code === 'string' ? conflict.shift_code : ''
@@ -606,6 +1100,46 @@ const UnitSchedulePage = () => {
     return () => window.clearTimeout(timer)
   }, [feedback])
 
+  useEffect(() => {
+    if (!isFullscreen) {
+      return undefined
+    }
+
+    if (typeof document === 'undefined') {
+      return undefined
+    }
+
+    const originalOverflow = document.body.style.overflow
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setIsFullscreen(false)
+      }
+    }
+
+    document.body.style.overflow = 'hidden'
+    document.addEventListener('keydown', handleKeyDown)
+
+    return () => {
+      document.body.style.overflow = originalOverflow
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [isFullscreen])
+
+  const handleAnchorInputChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const value = event.target.value
+    if (!value) return
+    const parsed = parseDate(value)
+    if (Number.isNaN(parsed.getTime())) {
+      return
+    }
+    if (viewMode === 'week') {
+      updateAnchorDate(startOfWeek(parsed))
+    } else {
+      updateAnchorDate(parsed)
+    }
+  }
+
   const handleNavigate = (direction: number) => {
     const baseDate = parseDate(anchorDate)
     let newAnchor: Date
@@ -623,10 +1157,7 @@ const UnitSchedulePage = () => {
         break
     }
 
-    setAnchorDate(formatDate(newAnchor))
-    clearActiveCell()
-    setPendingAssignments({})
-    setCustomInputs({})
+    updateAnchorDate(newAnchor)
   }
 
   const handleAutoGenerate = async () => {
@@ -665,6 +1196,7 @@ const UnitSchedulePage = () => {
         payload.range = {
           start_date: autoGenerateRange.start,
           end_date: autoGenerateRange.end,
+          range_type: autoGenerateRange.type,
         }
       }
 
@@ -1050,6 +1582,13 @@ const UnitSchedulePage = () => {
         },
       }
     })
+
+    // ensure menu visible vertically
+    setTimeout(() => {
+      if (menuAnchorRef.current) {
+        updateMenuPosition()
+      }
+    }, 0)
   }
 
   const handleAssignShift = (shiftType: ShiftType) => {
@@ -1197,10 +1736,7 @@ const UnitSchedulePage = () => {
     }
 
     setViewMode(mode)
-    setAnchorDate(formatDate(newAnchor))
-    clearActiveCell()
-    setPendingAssignments({})
-    setCustomInputs({})
+    updateAnchorDate(newAnchor)
   }
 
   const menuPortal =
@@ -1375,84 +1911,104 @@ const UnitSchedulePage = () => {
   }
 
   const unitMeta = data.meta.unit
+  const summaryRangeStart = formatDate(summaryStart)
+  const summaryRangeEnd = formatDate(summaryEnd)
+  const totalUnassigned = members.reduce(
+    (sum, member) => sum + (memberShiftCounts[member.id]?.UNASSIGNED ?? 0),
+    0,
+  )
 
   return (
     <>
       <div className="space-y-8">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-widest text-indigo-500">{unitMeta.code}</p>
-          <h2 className="text-2xl font-semibold text-slate-900 dark:text-slate-100">{unitMeta.name} のシフト</h2>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            表示期間: {data.meta.range.start_date} 〜 {data.meta.range.end_date}
-          </p>
-        </div>
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-end">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="flex rounded-full border border-white/30 bg-white/40 p-1 text-xs font-semibold text-slate-500 backdrop-blur dark:border-slate-700/60 dark:bg-slate-900/40 dark:text-slate-200">
-              {(
-                [
-                  { value: 'day', label: '日' },
-                  { value: 'week', label: '週' },
-                  { value: 'month', label: '月' },
-                ] as const
-              ).map((option) => (
+        <section className="rounded-2xl border border-white/30 bg-white/60 p-4 shadow-sm backdrop-blur dark:border-slate-700/60 dark:bg-slate-900/45 sm:p-6">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="space-y-1">
+              <p className="text-xs font-semibold uppercase tracking-widest text-indigo-500">{unitMeta.code}</p>
+              <h2 className="text-2xl font-semibold text-slate-900 dark:text-slate-100">{unitMeta.name} のシフト</h2>
+              <p className="text-sm text-slate-500 dark:text-slate-400">
+                表示期間: {data.meta.range.start_date} 〜 {data.meta.range.end_date}
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center justify-start gap-2 lg:justify-end">
+              <button
+                type="button"
+                onClick={() => setShowAutoGenerate(true)}
+                className="rounded-full border border-indigo-200/60 bg-white/60 px-4 py-2 text-sm font-semibold text-indigo-600 backdrop-blur transition hover:bg-indigo-50/80 dark:border-indigo-500/50 dark:bg-slate-900/50 dark:text-indigo-200 dark:hover:bg-indigo-500/25"
+              >
+                自動シフト作成
+              </button>
+              <button
+                type="button"
+                onClick={handleExport}
+                disabled={isExporting}
+                className="rounded-full border border-emerald-200/60 bg-emerald-50/70 px-4 py-2 text-sm font-semibold text-emerald-600 backdrop-blur transition hover:bg-emerald-100/80 disabled:opacity-60 dark:border-emerald-500/50 dark:bg-emerald-500/25 dark:text-emerald-200 dark:hover:bg-emerald-500/35"
+              >
+                {isExporting ? 'エクスポート中…' : 'Excelエクスポート'}
+              </button>
+              <Link
+                to={`/units/${unitId}/availability`}
+                className="rounded-full border border-indigo-200/60 bg-indigo-50/70 px-4 py-2 text-sm font-semibold text-indigo-600 backdrop-blur transition hover:bg-indigo-100/80 dark:border-indigo-500/50 dark:bg-indigo-500/25 dark:text-indigo-200 dark:hover:bg-indigo-500/35"
+              >
+                希望・休暇を登録
+              </Link>
+            </div>
+          </div>
+
+          <div className="mt-6 flex flex-wrap items-center gap-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex rounded-full border border-white/40 bg-white/60 p-1 text-xs font-semibold text-slate-500 backdrop-blur dark:border-slate-700/60 dark:bg-slate-900/40 dark:text-slate-200">
+                {(
+                  [
+                    { value: 'day', label: '日' },
+                    { value: 'week', label: '週' },
+                    { value: 'month', label: '月' },
+                  ] as const
+                ).map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => handleViewModeChange(option.value)}
+                    className={`rounded-full px-4 py-1.5 transition ${
+                      viewMode === option.value
+                        ? 'bg-indigo-500/20 text-indigo-600 shadow-sm shadow-indigo-200/40 dark:bg-indigo-500/35 dark:text-indigo-100'
+                        : 'hover:bg-white/40 hover:text-slate-700 dark:hover:bg-slate-800/40 dark:hover:text-slate-200'
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              {viewMode !== 'month' ? (
+                <label className="flex items-center gap-2 rounded-full border border-white/40 bg-white/60 px-3 py-1 text-xs text-slate-600 backdrop-blur dark:border-slate-700/60 dark:bg-slate-900/40 dark:text-slate-200">
+                  <span>{viewMode === 'day' ? '表示日' : '週の開始日'}</span>
+                  <input
+                    type="date"
+                    value={anchorInputValue}
+                    onChange={handleAnchorInputChange}
+                    className="rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-600 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-200 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:focus:border-indigo-500 dark:focus:ring-indigo-500/40"
+                  />
+                </label>
+              ) : null}
+              <div className="flex items-center gap-2">
                 <button
-                  key={option.value}
                   type="button"
-                  onClick={() => handleViewModeChange(option.value)}
-                  className={`rounded-full px-4 py-1.5 transition ${
-                    viewMode === option.value
-                      ? 'bg-indigo-500/20 text-indigo-600 shadow-sm shadow-indigo-200/40 dark:bg-indigo-500/35 dark:text-indigo-100'
-                      : 'hover:bg-white/40 hover:text-slate-700 dark:hover:bg-slate-800/40 dark:hover:text-slate-200'
-                  }`}
+                  onClick={() => handleNavigate(-1)}
+                  className="rounded-full border border-white/40 bg-white/60 px-4 py-2 text-sm text-slate-600 backdrop-blur transition hover:bg-white/80 hover:text-indigo-600 dark:border-slate-700/60 dark:bg-slate-900/40 dark:text-slate-200 dark:hover:bg-slate-900/60 dark:hover:text-indigo-200"
                 >
-                  {option.label}
+                  {navigationLabels.prev}
                 </button>
-              ))}
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => handleNavigate(-1)}
-                className="rounded-full border border-white/30 bg-white/40 px-4 py-2 text-sm text-slate-600 transition-colors duration-200 hover:bg-white/70 hover:text-indigo-600 dark:border-slate-700/60 dark:bg-slate-900/40 dark:text-slate-200 dark:hover:bg-slate-900/60 dark:hover:text-indigo-200"
-              >
-                前へ
-              </button>
-              <button
-                type="button"
-                onClick={() => handleNavigate(1)}
-                className="rounded-full border border-white/30 bg-white/40 px-4 py-2 text-sm text-slate-600 transition-colors duration-200 hover:bg-white/70 hover:text-indigo-600 dark:border-slate-700/60 dark:bg-slate-900/40 dark:text-slate-200 dark:hover:bg-slate-900/60 dark:hover:text-indigo-200"
-              >
-                次へ
-              </button>
+                <button
+                  type="button"
+                  onClick={() => handleNavigate(1)}
+                  className="rounded-full border border-white/40 bg-white/60 px-4 py-2 text-sm text-slate-600 backdrop-blur transition hover:bg-white/80 hover:text-indigo-600 dark:border-slate-700/60 dark:bg-slate-900/40 dark:text-slate-200 dark:hover:bg-slate-900/60 dark:hover:text-indigo-200"
+                >
+                  {navigationLabels.next}
+                </button>
+              </div>
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setShowAutoGenerate(true)}
-              className="rounded-full border border-indigo-200/60 bg-white/50 px-4 py-2 text-sm font-semibold text-indigo-600 backdrop-blur transition hover:bg-indigo-50/70 dark:border-indigo-500/50 dark:bg-slate-900/50 dark:text-indigo-200 dark:hover:bg-indigo-500/25"
-            >
-              自動シフト作成
-            </button>
-            <button
-              type="button"
-              onClick={handleExport}
-              disabled={isExporting}
-              className="rounded-full border border-emerald-200/60 bg-emerald-50/70 px-4 py-2 text-sm font-semibold text-emerald-600 backdrop-blur transition hover:bg-emerald-100/80 disabled:opacity-60 dark:border-emerald-500/50 dark:bg-emerald-500/25 dark:text-emerald-200 dark:hover:bg-emerald-500/35"
-            >
-              {isExporting ? 'エクスポート中…' : 'Excelエクスポート'}
-            </button>
-            <Link
-              to={`/units/${unitId}/availability`}
-              className="rounded-full border border-indigo-200/60 bg-indigo-50/70 px-4 py-2 text-sm font-semibold text-indigo-600 backdrop-blur transition hover:bg-indigo-100/80 dark:border-indigo-500/50 dark:bg-indigo-500/25 dark:text-indigo-200 dark:hover:bg-indigo-500/35"
-            >
-              希望・休暇を登録
-            </Link>
-          </div>
-        </div>
-      </div>
+        </section>
 
       <div className="glass-panel flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/20 px-4 py-3 text-slate-600 dark:border-slate-700/60 dark:text-slate-300">
         <div className="text-sm text-slate-600 dark:text-slate-300">
@@ -1505,12 +2061,116 @@ const UnitSchedulePage = () => {
         </div>
       ) : null}
 
-      <section className="glass-panel rounded-2xl border border-white/20 p-1 dark:border-slate-700/60">
-        <div className="relative max-h-[80vh] overflow-x-auto overflow-y-auto">
+      <div
+        className={
+          isFullscreen
+            ? 'fixed inset-0 z-[120] flex flex-col overflow-hidden bg-white/90 px-4 pb-6 pt-2 sm:pt-3 text-slate-800 backdrop-blur dark:bg-slate-900/90 dark:text-slate-100 !mt-0'
+            : 'relative'
+        }
+      >
+        {isFullscreen ? (
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-4 text-slate-800 sm:mb-4 dark:text-slate-100">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-widest text-indigo-600 dark:text-indigo-200">{unitMeta.code}</p>
+              <h3 className="text-xl font-semibold text-slate-900 dark:text-white">{unitMeta.name} のシフト</h3>
+              <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+                表示期間: {data.meta.range.start_date} 〜 {data.meta.range.end_date}
+              </p>
+            </div>
+            <div className="flex flex-1 flex-wrap items-center justify-end gap-3">
+              <div className="flex rounded-full border border-indigo-200/60 bg-indigo-50/80 p-1 text-xs font-semibold text-indigo-600 dark:border-indigo-300/40 dark:bg-white/10 dark:text-indigo-100">
+                {(
+                  [
+                    { value: 'day', label: '日' },
+                    { value: 'week', label: '週' },
+                    { value: 'month', label: '月' },
+                  ] as const
+                ).map((option) => (
+                  <button
+                    key={`fullscreen-${option.value}`}
+                    type="button"
+                    onClick={() => handleViewModeChange(option.value)}
+                    className={`rounded-full px-4 py-1.5 transition ${
+                      viewMode === option.value
+                        ? 'bg-indigo-500 text-white shadow-sm dark:bg-indigo-500/60'
+                        : 'text-indigo-600 hover:bg-white dark:text-indigo-100 dark:hover:bg-white/10'
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleNavigate(-1)}
+                  className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 transition-colors duration-200 hover:bg-indigo-50 hover:text-indigo-600 dark:border-white/20 dark:bg-white/10 dark:text-slate-100 dark:hover:bg-white/20 dark:hover:text-white"
+                >
+                  前へ
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleNavigate(1)}
+                  className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 transition-colors duration-200 hover:bg-indigo-50 hover:text-indigo-600 dark:border-white/20 dark:bg-white/10 dark:text-slate-100 dark:hover:bg-white/20 dark:hover:text-white"
+                >
+                  次へ
+                </button>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAutoGenerate(true)}
+                  className="rounded-full border border-indigo-300 bg-indigo-100 px-4 py-2 text-sm font-semibold text-indigo-700 transition hover:bg-indigo-200 dark:border-indigo-200/60 dark:bg-white/10 dark:text-indigo-100 dark:hover:bg-white/20"
+                >
+                  自動シフト作成
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveChanges}
+                  disabled={!hasPendingChanges || batchUpdateMutation.isPending}
+                  className="rounded-full bg-indigo-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-60 dark:bg-indigo-500 dark:hover:bg-indigo-400"
+                >
+                  {batchUpdateMutation.isPending ? '保存中…' : '変更を保存'}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+        <section
+          className={`glass-panel relative rounded-2xl border border-white/20 dark:border-slate-700/60 ${
+            isFullscreen
+              ? 'flex h-full flex-1 min-h-0 flex-col border-indigo-300/40 bg-white/95 p-2 sm:p-3 shadow-2xl dark:border-slate-600/80 dark:bg-slate-950/95'
+              : 'p-1'
+          }`}
+        >
+          <button
+            type="button"
+            onClick={() => setIsFullscreen((prev) => !prev)}
+            className={`absolute left-3 top-0 z-[140] inline-flex h-10 w-10 -translate-y-1/2 transform items-center justify-center rounded-full border text-slate-600 backdrop-blur transition hover:scale-[1.03] focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 dark:text-slate-200 ${
+              isFullscreen
+                ? 'border-slate-200 bg-white/95 text-slate-700 shadow-lg hover:bg-white dark:border-slate-500/70 dark:bg-slate-800/70 dark:text-slate-100 dark:hover:bg-slate-800'
+                : 'border-indigo-200/60 bg-indigo-50/90 text-indigo-600 shadow-sm hover:bg-indigo-50 dark:border-slate-600/60 dark:bg-slate-900/70 dark:text-slate-200 dark:hover:bg-slate-900'
+            }`}
+            aria-label={isFullscreen ? '全画面を終了' : '全画面表示'}
+            title={isFullscreen ? '全画面を終了' : '全画面表示'}
+          >
+            {isFullscreen ? (
+              <CompressIcon className="h-5 w-5" />
+            ) : (
+              <ExpandIcon className="h-5 w-5" />
+            )}
+          </button>
+          <div
+            className={
+              isFullscreen
+                ? 'relative flex-1 min-h-0 overflow-auto pb-6'
+                : 'relative max-h-[80vh] overflow-x-auto overflow-y-auto'
+            }
+          >
           <table className="relative w-full min-w-[720px] border-separate border-spacing-y-2">
             <thead>
               <tr className="text-slate-500 dark:text-slate-400">
-                <th className="sticky left-0 top-0 z-40 min-w-[140px] rounded-l-2xl border border-white/20 bg-white/75 px-4 py-3 text-left text-xs font-semibold uppercase tracking-widest text-slate-600 shadow-sm backdrop-blur sm:min-w-[180px] dark:border-slate-700/60 dark:bg-slate-900/90 dark:text-slate-300 dark:shadow-slate-950/40">
+                <th className="sticky left-0 top-0 z-40 min-w-[140px] rounded-l-2xl border border-white/20 bg-white/75 px-4 py-3 text-left text-xs font-semibold uppercase tracking-widest text-slate-600 shadow-sm backdrop-blur sm:min-w-[140px] dark:border-slate-700/60 dark:bg-slate-900/90 dark:text-slate-300 dark:shadow-slate-950/40">
                   メンバー
                 </th>
                 {dateRange.map((date) => {
@@ -1520,13 +2180,32 @@ const UnitSchedulePage = () => {
                   const holidayInfo = holidaysMap.get(date)
                   const dayType = getDayType(parsed, Boolean(holidayInfo))
                   const dayStyle = DAY_STYLES[dayType]
+                  const shortageInfo = coverageShortages[date]
+                  const headerVisualClass = shortageInfo
+                    ? 'bg-rose-100 text-rose-700 ring-1 ring-rose-200/70 shadow-inner dark:bg-rose-500/95 dark:text-rose-100 dark:ring-rose-500/70'
+                    : `${dayStyle.headerBg} ${dayStyle.headerText}`
+                  const shortageSummary = shortageInfo
+                    ? shortageInfo.details
+                        .map((detail) => `${SHORT_SHIFT_LABELS[detail.shift]}${detail.missing}`)
+                        .join('/')
+                    : ''
+                  const headerTextClass = shortageInfo
+                    ? 'text-rose-700 dark:text-rose-100'
+                    : 'text-slate-600 dark:text-slate-200'
 
                   return (
                     <th
                       key={date}
-                      className={`${widthClass} sticky top-0 z-30 rounded-2xl px-4 py-3 text-left text-xs font-semibold uppercase tracking-widest shadow-sm ${dayStyle.headerBg} ${dayStyle.headerText}`}
+                      className={`${widthClass} sticky top-0 z-30 rounded-2xl px-4 py-3 text-left text-xs font-semibold uppercase tracking-widest shadow-sm ${headerVisualClass}`}
                     >
-                      <span className="text-slate-600 dark:text-slate-200">{label}</span>
+                      <div className={`flex flex-col items-start gap-1 ${headerTextClass}`}>
+                        <span className="whitespace-nowrap">{label}</span>
+                        {shortageInfo ? (
+                          <span className="whitespace-nowrap text-[11px] font-semibold text-rose-600 dark:text-rose-100">
+                            不足：{shortageSummary}
+                          </span>
+                        ) : null}
+                      </div>
                       {holidayInfo ? (
                         <span className="mt-1 block text-[11px] font-medium text-slate-500 dark:text-slate-400">{holidayInfo.name}</span>
                       ) : null}
@@ -1540,12 +2219,17 @@ const UnitSchedulePage = () => {
                 const allowedShifts = (member.allowed_shift_types ?? []).filter((type) =>
                   !['OFF', 'NIGHT_AFTER'].includes((type.code ?? '').toUpperCase()),
                 )
+                const employmentLabel = member.employment_type
+                  ? EMPLOYMENT_TYPE_LABELS[member.employment_type] ?? member.employment_type
+                  : '雇用区分未設定'
 
                 return (
                   <tr key={member.id}>
-                    <td className="sticky left-0 z-10 min-w-[170px] rounded-l-2xl border border-white/30 bg-white/70 px-4 py-4 text-sm text-slate-800 shadow-sm backdrop-blur sm:min-w-[200px] dark:border-slate-700/60 dark:bg-slate-900/90 dark:text-slate-200 dark:shadow-none">
-                      <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{member.name}</p>
-                      <p className="text-xs text-slate-500 dark:text-slate-400">{member.role}</p>
+                    <td className="sticky left-0 z-10 min-w-[220px] rounded-l-2xl border border-white/30 bg-white/70 px-4 py-2 text-sm text-slate-800 shadow-sm backdrop-blur sm:min-w-[200px] lg:min-w-[200px] dark:border-slate-700/60 dark:bg-slate-900/90 dark:text-slate-200 dark:shadow-none">
+                      <p className="text-sm font-semibold text-slate-900 dark:text-slate-100 whitespace-nowrap">{member.name}</p>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 whitespace-nowrap">
+                        {member.role} / {employmentLabel}
+                      </p>
                       <div className="mt-2 flex flex-wrap gap-1">
                         {allowedShifts.length ? (
                           allowedShifts.map((type) => {
@@ -1573,6 +2257,13 @@ const UnitSchedulePage = () => {
                       const parsedDate = parseDate(date)
                       const dayType = getDayType(parsedDate, Boolean(holidayInfo))
                       const dayStyle = DAY_STYLES[dayType]
+                      const dayShortage = coverageShortages[date]
+                      const cellBackgroundClass = dayShortage
+                        ? 'bg-rose-100/80 dark:bg-rose-500/25'
+                        : dayStyle.columnBg
+                      const cellRingClass = dayShortage
+                        ? 'ring-1 ring-rose-200/70 dark:ring-rose-500/50'
+                        : ''
 
                       let label = '未割当'
                       let times = ''
@@ -1627,7 +2318,10 @@ const UnitSchedulePage = () => {
                       const shiftStyle = SHIFT_STYLES[shiftStyleKey]
 
                       return (
-                    <td key={cellKey} className={`relative border border-slate-200 px-0 py-0 transition-colors ${dayStyle.columnBg} dark:border-slate-800`}>
+                        <td
+                          key={cellKey}
+                          className={`relative border border-slate-200 px-0 py-0 transition-colors ${cellBackgroundClass} ${cellRingClass} dark:border-slate-800`}
+                        >
                           <button
                             type="button"
                             onClick={(event) => handleCellClick(member.id, date, event)}
@@ -1644,7 +2338,7 @@ const UnitSchedulePage = () => {
                             ) : null}
                           </button>
 
-                      </td>
+                        </td>
                       )
                     })}
                   </tr>
@@ -1654,13 +2348,121 @@ const UnitSchedulePage = () => {
           </table>
         </div>
       </section>
+      </div>
+      <section className="glass-panel mt-6 rounded-2xl border border-white/20 p-6 dark:border-slate-700/60">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">メンバー別シフト回数とポイント</h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              表示期間: {summaryRangeStart} 〜 {summaryRangeEnd}
+            </p>
+          </div>
+          {totalUnassigned > 0 ? (
+            <span className="inline-flex items-center rounded-full bg-rose-100/80 px-4 py-1 text-xs font-semibold text-rose-600 shadow-sm dark:bg-rose-500/25 dark:text-rose-200">
+              未割当 {totalUnassigned} 枠
+            </span>
+          ) : null}
+        </div>
+
+        {members.length ? (
+          <div className="mt-4 space-y-4">
+            {members.map((member) => {
+              const breakdown = memberShiftCounts[member.id] ?? {}
+              const chips = SHIFT_SUMMARY_ORDER.filter((code) => code !== 'UNASSIGNED')
+                .map((code) => ({
+                  code,
+                  label: shiftLabelMap[code] ?? code,
+                  count: breakdown[code] ?? 0,
+                  style: SHIFT_STYLES[resolveSummaryStyle(code)],
+                }))
+                .filter((entry) => entry.count > 0)
+
+              const unassignedCount = breakdown.UNASSIGNED ?? 0
+              const fairness =
+                memberFairnessPoints[member.id] ?? ({ total: 0, night: 0, weekend: 0, holiday: 0 } as const)
+              const fairnessBreakdown = [
+                { key: 'night' as const, label: '夜勤', points: fairness.night },
+                { key: 'weekend' as const, label: '週末', points: fairness.weekend },
+                { key: 'holiday' as const, label: '祝日', points: fairness.holiday },
+              ].filter((entry) => entry.points > 0)
+
+              return (
+                <div
+                  key={member.id}
+                  className="rounded-2xl border border-white/30 bg-white/60 px-4 py-3 shadow-sm backdrop-blur dark:border-slate-700/60 dark:bg-slate-900/40"
+                >
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-[240px] xl:min-w-[280px]">
+                      <p className="text-sm font-semibold text-slate-900 dark:text-slate-100 whitespace-nowrap">{member.name}</p>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 whitespace-nowrap">
+                        {member.role} /{' '}
+                        {member.employment_type
+                          ? EMPLOYMENT_TYPE_LABELS[member.employment_type] ?? member.employment_type
+                          : '雇用区分未設定'}
+                      </p>
+                    </div>
+                    <div className="flex w-full flex-wrap items-center gap-2 justify-between sm:flex-nowrap">
+                      <div className="flex flex-wrap items-center gap-2">
+                        {unassignedCount > 0 ? (
+                          <span className="inline-flex items-center rounded-full bg-rose-100/80 px-3 py-1 text-xs font-semibold text-rose-600 shadow-sm dark:bg-rose-500/25 dark:text-rose-200">
+                            未割当 {unassignedCount} 枠
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2 justify-end sm:ml-6">
+                        {fairnessBreakdown.map((entry) => {
+                          const style = FAIRNESS_TAG_STYLES[entry.key]
+                          return (
+                            <span
+                              key={`${member.id}-fairness-${entry.key}`}
+                              className={`${style.container} ${style.label}`}
+                            >
+                              {entry.label} {entry.points} pt
+                            </span>
+                          )
+                        })}
+                        <span className={`${FAIRNESS_TAG_STYLES.total.container} ${FAIRNESS_TAG_STYLES.total.label}`}>
+                          合計ポイント {fairness.total} pt
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {chips.length ? (
+                      chips.map((chip) => (
+                        <span
+                          key={`${member.id}-${chip.code}`}
+                          className={`inline-flex items-center gap-2 rounded-full border border-white/40 px-3 py-1 text-xs font-semibold shadow-sm backdrop-blur dark:border-slate-700/60 ${chip.style.bg} ${chip.style.labelText}`}
+                        >
+                          <span>{chip.label}</span>
+                          <span className="text-sm font-bold">{chip.count}</span>
+                          <span className="text-[10px] font-medium">回</span>
+                        </span>
+                      ))
+                    ) : (
+                      <span className="text-xs text-slate-400 dark:text-slate-500">割当がまだありません。</span>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        ) : (
+          <p className="mt-4 text-sm text-slate-500 dark:text-slate-400">メンバー情報がありません。</p>
+        )}
+      </section>
     </div>
 
       {showAutoGenerate ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4">
           <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-950 dark:text-slate-100 dark:shadow-slate-950/40">
             <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">自動シフト作成</h3>
-            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">対象月: {monthKey}</p>
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+              {autoGenerateViewLabel}の{autoGenerateRangeHeading}: {autoGenerateRangeLabel}
+            </p>
+            {autoGenerateRange?.type !== 'day' ? (
+              <p className="text-xs text-slate-500 dark:text-slate-500/80">対象月: {monthKey}</p>
+            ) : null}
 
             <div className="mt-4 space-y-3 text-sm text-slate-600 dark:text-slate-300">
               <label className="flex items-center gap-2">
@@ -1728,7 +2530,7 @@ const UnitSchedulePage = () => {
                 />
                 正社員の同一勤務 3 日連続を禁止
               </label>
-              <label className="flex items-center gap-2">
+              <label className="flex items-start gap-2">
                 <input
                   type="checkbox"
                   checked={autoGenOptions.balanceWorkload}
@@ -1739,7 +2541,12 @@ const UnitSchedulePage = () => {
                     }))
                   }
                 />
-                勤務・休み回数のバランスを考慮
+                <span>
+                  <span className="block">公平ポイントをなるべく均等に配分</span>
+                  <span className="block text-xs text-slate-500 dark:text-slate-400">
+                    夜勤・週末・祝日ポイントや勤務回数の偏りを抑える制約を加えます。
+                  </span>
+                </span>
               </label>
               <label className="flex flex-col gap-1 text-sm text-slate-600 dark:text-slate-300">
                 夜勤の月上限

@@ -71,7 +71,7 @@ class ShiftController extends Controller
                     'id' => $user->id,
                     'name' => $user->name,
                     'role' => $membership->role,
-                    'can_night_shift' => (bool) $user->can_night_shift,
+                    'employment_type' => $user->employment_type,
                     'allowed_shift_types' => $user->allowedShiftTypes
                         ? $user->allowedShiftTypes
                             ->map(fn ($shiftType) => [

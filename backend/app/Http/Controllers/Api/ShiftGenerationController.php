@@ -299,11 +299,13 @@ class ShiftGenerationController extends Controller
                         ?? data_get($membership, 'user.settings.schedule_preferences')
                 );
 
+                $allowedShiftCodes = $allowedShiftCodes ?? [];
+
                 return [
                     'id' => $user->id ?? Arr::get($membership, 'user_id'),
                     'name' => $user->name ?? Arr::get($membership, 'name', ''),
                     'employment_type' => $user->employment_type ?? Arr::get($membership, 'employment_type', 'member'),
-                    'can_night_shift' => (bool) ($user->can_night_shift ?? Arr::get($membership, 'can_night_shift', true)),
+                    'can_night_shift' => in_array('NIGHT', $allowedShiftCodes, true),
                     'allowed_shift_codes' => $allowedShiftCodes,
                     'schedule_preferences' => $schedulePreferences,
                 ];

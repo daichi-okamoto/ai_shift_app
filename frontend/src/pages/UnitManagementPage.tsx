@@ -585,7 +585,6 @@ const UnitManagementPage = () => {
                       ) : null}
                       <div className="flex-1">
                         <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">{member.name}</p>
-                        <p className="text-xs text-slate-400 dark:text-slate-500">ユーザーID: {member.user_id}</p>
                         <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
                           雇用区分:{' '}
                           {employmentTypeLabels[member.employment_type ?? ''] ?? member.employment_type ?? '情報なし'}

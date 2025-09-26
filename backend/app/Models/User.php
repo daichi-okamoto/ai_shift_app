@@ -29,8 +29,6 @@ class User extends Authenticatable
         'password',
         'role',
         'employment_type',
-        'can_night_shift',
-        'contract_hours_per_week',
         'settings',
     ];
 
@@ -55,7 +53,6 @@ class User extends Authenticatable
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
             'role' => UserRole::class,
-            'can_night_shift' => 'boolean',
             'settings' => 'array',
         ];
     }

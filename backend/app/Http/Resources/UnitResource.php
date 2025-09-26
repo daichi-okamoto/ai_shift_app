@@ -40,7 +40,7 @@ class UnitResource extends JsonResource
                         'id' => $membership->user->id,
                         'name' => $membership->user->name,
                         'role' => $membership->role,
-                        'can_night_shift' => (bool) $membership->user->can_night_shift,
+                        'employment_type' => $membership->user->employment_type,
                     ];
                 })->values()->all()
                 : [],

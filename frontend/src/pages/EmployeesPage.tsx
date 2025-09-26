@@ -8,8 +8,8 @@ import { useFlashMessage } from '../features/flash/FlashMessageContext'
 
 const roleLabels: Record<string, string> = {
   admin: '管理者',
-  leader: 'チームリーダー',
-  member: 'メンバー',
+  leader: '編集者',
+  member: '一般',
 }
 
 const employmentTypeLabels: Record<string, string> = {
@@ -150,7 +150,7 @@ const EmployeesPage = () => {
           </select>
         </label>
         <label className="flex flex-col gap-1 text-xs font-semibold uppercase tracking-widest text-slate-500">
-          役割
+          システム権限
           <select
             value={roleFilter}
             onChange={(event) => setRoleFilter(event.target.value)}
@@ -236,7 +236,7 @@ const EmployeesPage = () => {
                   <tr className="text-left text-xs font-semibold uppercase tracking-widest text-slate-500">
                     <th className="px-6 py-3 w-10" aria-label="並び替え" />
                     <th className="px-6 py-3">氏名</th>
-                    <th className="px-6 py-3">役割</th>
+                    <th className="px-6 py-3">システム権限</th>
                     <th className="px-6 py-3">雇用区分</th>
                     <th className="px-6 py-3">勤務可能シフト</th>
                     <th className="px-6 py-3">所属ユニット</th>
@@ -280,7 +280,6 @@ const EmployeesPage = () => {
                             </td>
                             <td className="align-top px-6 py-4 text-sm text-slate-900 dark:text-slate-100">
                               <div className="font-semibold">{employee.name}</div>
-                              <div className="text-xs text-slate-500 dark:text-slate-400">ID: {employee.id}</div>
                             </td>
                             <td className="align-top px-6 py-4 text-sm text-slate-600 dark:text-slate-300">
                               {employee.role_label ?? roleLabels[employee.role] ?? employee.role}

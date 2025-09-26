@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\EmployeeStoreRequest;
 use App\Http\Requests\EmployeeUpdateRequest;
 use App\Http\Resources\UserResource;
+use App\Models\Assignment;
 use App\Models\ShiftType;
 use App\Models\User;
 use App\Support\SchedulePreference;
@@ -66,8 +67,6 @@ class EmployeeController extends Controller
                 'email' => $data['email'],
                 'role' => $data['role'],
                 'employment_type' => $data['employment_type'],
-                'can_night_shift' => (bool) ($data['can_night_shift'] ?? false),
-                'contract_hours_per_week' => $data['contract_hours_per_week'] ?? null,
                 'password' => $data['password'],
                 'settings' => $schedulePreferenceSettings,
             ]);
@@ -119,8 +118,6 @@ class EmployeeController extends Controller
                 'email' => $data['email'],
                 'role' => $data['role'],
                 'employment_type' => $data['employment_type'],
-                'can_night_shift' => (bool) ($data['can_night_shift'] ?? false),
-                'contract_hours_per_week' => $data['contract_hours_per_week'] ?? null,
             ]);
 
             if (! empty($data['password'])) {
@@ -171,6 +168,10 @@ class EmployeeController extends Controller
         }
 
         DB::transaction(function () use ($employee) {
+            Assignment::query()
+                ->where('user_id', $employee->id)
+                ->update(['user_id' => null]);
+
             $employee->memberships()->delete();
             $employee->delete();
         });

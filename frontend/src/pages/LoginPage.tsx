@@ -8,17 +8,18 @@ const LoginPage = () => {
   const navigate = useNavigate()
   const [email, setEmail] = useState('admin@example.com')
   const [password, setPassword] = useState('password')
+  const [organizationCode, setOrganizationCode] = useState('CARE001')
   const [error, setError] = useState<string | null>(null)
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setError(null)
     try {
-      await login(email, password)
+      await login({ email, password, organizationCode })
       navigate('/', { replace: true })
     } catch (err) {
       console.error(err)
-      setError('ログインに失敗しました。メールアドレスとパスワードをご確認ください。')
+      setError('ログインに失敗しました。事業所コード・メールアドレス・パスワードをご確認ください。')
     }
   }
 
@@ -30,10 +31,24 @@ const LoginPage = () => {
         </p>
         <h1 className="text-2xl font-bold">サインイン</h1>
         <p className="mt-2 text-sm text-slate-400">
-          デモ用の初期ユーザーは <code className="rounded bg-slate-800 px-1">admin@example.com</code> /{' '}
+          デモ用の初期ユーザーは 事業所コード{' '}
+          <code className="rounded bg-slate-800 px-1">CARE001</code>・メール{' '}
+          <code className="rounded bg-slate-800 px-1">admin@example.com</code>・パスワード{' '}
           <code className="rounded bg-slate-800 px-1">password</code> です。
         </p>
         <form className="mt-6 space-y-5" onSubmit={handleSubmit}>
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-widest text-slate-400">
+              事業所コード
+            </label>
+            <input
+              value={organizationCode}
+              onChange={(event) => setOrganizationCode(event.target.value.toUpperCase())}
+              type="text"
+              className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm uppercase tracking-widest focus:border-indigo-500 focus:outline-none"
+              required
+            />
+          </div>
           <div>
             <label className="block text-xs font-semibold uppercase tracking-widest text-slate-400">
               メールアドレス

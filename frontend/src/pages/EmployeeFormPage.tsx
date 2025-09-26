@@ -10,8 +10,8 @@ import { useFlashMessage } from '../features/flash/FlashMessageContext'
 
 const roleOptions: Array<{ value: EmployeePayload['role']; label: string }> = [
   { value: 'admin', label: '管理者' },
-  { value: 'leader', label: 'チームリーダー' },
-  { value: 'member', label: 'メンバー' },
+  { value: 'leader', label: '編集者' },
+  { value: 'member', label: '一般' },
 ]
 
 const employmentOptions: Array<{ value: EmployeePayload['employment_type']; label: string }> = [
@@ -88,8 +88,6 @@ const EmployeeFormPage = () => {
   const [email, setEmail] = useState('')
   const [role, setRole] = useState<EmployeePayload['role']>('member')
   const [employmentType, setEmploymentType] = useState<EmployeePayload['employment_type']>('full_time')
-  const [canNightShift, setCanNightShift] = useState(false)
-  const [contractHours, setContractHours] = useState<string>('')
   const [allowedShiftTypeIds, setAllowedShiftTypeIds] = useState<number[]>([])
   const [password, setPassword] = useState('')
   const [memberships, setMemberships] = useState<MembershipFormRow[]>([])
@@ -116,8 +114,6 @@ const EmployeeFormPage = () => {
     setEmail(employee.email)
     setRole(employee.role as EmployeePayload['role'])
     setEmploymentType(employee.employment_type as EmployeePayload['employment_type'])
-    setCanNightShift(Boolean(employee.can_night_shift))
-    setContractHours(employee.contract_hours_per_week?.toString() ?? '')
     const allowedFromApi = (employee.allowed_shift_types ?? []).map((shiftType) => shiftType.id)
     setAllowedShiftTypeIds(allowedFromApi)
     setMemberships(
@@ -247,8 +243,6 @@ const EmployeeFormPage = () => {
       email,
       role,
       employment_type: employmentType,
-      can_night_shift: canNightShift,
-      contract_hours_per_week: contractHours ? Number(contractHours) : null,
       allowed_shift_type_ids: normalizedAllowedShiftTypeIds,
       memberships: filteredMemberships,
       schedule_preferences: {
@@ -343,7 +337,7 @@ const EmployeeFormPage = () => {
               />
             </label>
             <label className="flex flex-col gap-2 text-sm text-slate-600 dark:text-slate-300">
-              役割
+              システム権限
               <select
                 value={role}
                 onChange={(event) => setRole(event.target.value as EmployeePayload['role'])}
@@ -371,18 +365,6 @@ const EmployeeFormPage = () => {
               </select>
             </label>
             <label className="flex flex-col gap-2 text-sm text-slate-600 dark:text-slate-300">
-              週あたり契約時間
-              <input
-                type="number"
-                min={0}
-                max={168}
-                value={contractHours}
-                onChange={(event) => setContractHours(event.target.value)}
-                placeholder="例: 40"
-                className="rounded-lg border border-slate-200 bg-white/90 px-3 py-2 text-slate-900 shadow-sm placeholder:text-slate-400 focus:border-indigo-400 focus:outline-none dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-100 dark:placeholder:text-slate-500"
-              />
-            </label>
-            <label className="flex flex-col gap-2 text-sm text-slate-600 dark:text-slate-300">
               パスワード{isEdit ? '（変更する場合のみ入力）' : ''}
               <input
                 type="password"
@@ -394,15 +376,88 @@ const EmployeeFormPage = () => {
               />
             </label>
           </div>
-          <label className="mt-4 flex items-center gap-3 text-sm text-slate-600 dark:text-slate-300">
-            <input
-              type="checkbox"
-              checked={canNightShift}
-              onChange={(event) => setCanNightShift(event.target.checked)}
-              className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 dark:border-slate-600 dark:bg-slate-900/60 dark:text-indigo-400"
-            />
-            夜勤シフトに入れる
-          </label>
+        </section>
+
+        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700/60 dark:bg-slate-900/40 dark:shadow-slate-900/50">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">所属ユニット</h2>
+            <button
+              type="button"
+              onClick={handleAddMembership}
+              className="inline-flex items-center rounded-full border border-slate-200 bg-white/80 px-4 py-1.5 text-sm font-semibold text-slate-600 transition hover:bg-slate-100 dark:border-slate-700/60 dark:bg-slate-900/40 dark:text-slate-200 dark:hover:bg-slate-800/60"
+            >
+              + 所属を追加
+            </button>
+          </div>
+          <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">所属ユニットは一覧やシフト調整の際に表示順で利用されます。</p>
+
+          <div className="mt-4 space-y-4">
+            {memberships.length === 0 ? (
+              <p className="rounded-lg border border-dashed border-slate-200 p-4 text-sm text-slate-400 dark:border-slate-700/60 dark:text-slate-500">
+                所属を追加してください。
+              </p>
+            ) : null}
+
+            {memberships.map((membership, index) => {
+              const usedUnitIds = memberships
+                .filter((item) => item.id !== membership.id && item.unitId !== null)
+                .map((item) => item.unitId)
+
+              return (
+                <div
+                  key={membership.id}
+                  className="rounded-xl border border-slate-200 bg-white/90 p-4 shadow-sm dark:border-slate-700/60 dark:bg-slate-900/40 dark:shadow-slate-900/50"
+                >
+                  <div className="grid gap-3 md:grid-cols-[2fr,1fr,auto] md:items-center">
+                    <label className="flex flex-col gap-2 text-sm text-slate-600 dark:text-slate-300">
+                      ユニット
+                      <select
+                        value={membership.unitId ?? ''}
+                        onChange={(event) =>
+                          handleMembershipChange(membership.id, {
+                            unitId: event.target.value ? Number(event.target.value) : null,
+                          })
+                        }
+                        className="rounded-lg border border-slate-200 bg-white/90 px-3 py-2 text-slate-900 shadow-sm focus:border-indigo-400 focus:outline-none dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-100"
+                      >
+                        <option value="">選択してください</option>
+                        {units.map((unit) => (
+                          <option key={unit.id} value={unit.id} disabled={usedUnitIds.includes(unit.id)}>
+                            {unit.code} / {unit.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="flex flex-col gap-2 text-sm text-slate-600 dark:text-slate-300">
+                      役割
+                      <select
+                        value={membership.role}
+                        onChange={(event) =>
+                          handleMembershipChange(membership.id, {
+                            role: event.target.value as 'leader' | 'member',
+                          })
+                        }
+                        className="rounded-lg border border-slate-200 bg-white/90 px-3 py-2 text-slate-900 shadow-sm focus:border-indigo-400 focus:outline-none dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-100"
+                      >
+                        <option value="leader">リーダー</option>
+                        <option value="member">メンバー</option>
+                      </select>
+                    </label>
+                    <div className="flex items-center justify-end gap-3">
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveMembership(membership.id)}
+                        className="inline-flex items-center rounded-full border border-rose-200 px-3 py-1 text-xs font-semibold text-rose-600 transition hover:bg-rose-50 dark:border-rose-500/50 dark:text-rose-300 dark:hover:bg-rose-500/10"
+                      >
+                        削除
+                      </button>
+                    </div>
+                  </div>
+                  <p className="mt-2 text-xs text-slate-400 dark:text-slate-500">#{index + 1}</p>
+                </div>
+              )
+            })}
+          </div>
         </section>
 
         <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700/60 dark:bg-slate-900/40 dark:shadow-slate-900/50">
@@ -506,87 +561,7 @@ const EmployeeFormPage = () => {
           </p>
         </section>
 
-        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700/60 dark:bg-slate-900/40 dark:shadow-slate-900/50">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">所属ユニット</h2>
-            <button
-              type="button"
-              onClick={handleAddMembership}
-              className="inline-flex items-center rounded-full border border-slate-200 bg-white/80 px-4 py-1.5 text-sm font-semibold text-slate-600 transition hover:bg-slate-100 dark:border-slate-700/60 dark:bg-slate-900/40 dark:text-slate-200 dark:hover:bg-slate-800/60"
-            >
-              + 所属を追加
-            </button>
-          </div>
-          <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">所属ユニットは一覧やシフト調整の際に表示順で利用されます。</p>
-
-          <div className="mt-4 space-y-4">
-            {memberships.length === 0 ? (
-              <p className="rounded-lg border border-dashed border-slate-200 p-4 text-sm text-slate-400 dark:border-slate-700/60 dark:text-slate-500">
-                所属を追加してください。
-              </p>
-            ) : null}
-
-            {memberships.map((membership, index) => {
-              const usedUnitIds = memberships
-                .filter((item) => item.id !== membership.id && item.unitId !== null)
-                .map((item) => item.unitId)
-
-              return (
-                <div
-                  key={membership.id}
-                  className="rounded-xl border border-slate-200 bg-white/90 p-4 shadow-sm dark:border-slate-700/60 dark:bg-slate-900/40 dark:shadow-slate-900/50"
-                >
-                  <div className="grid gap-3 md:grid-cols-[2fr,1fr,auto] md:items-center">
-                    <label className="flex flex-col gap-2 text-sm text-slate-600 dark:text-slate-300">
-                      ユニット
-                      <select
-                        value={membership.unitId ?? ''}
-                        onChange={(event) =>
-                          handleMembershipChange(membership.id, {
-                            unitId: event.target.value ? Number(event.target.value) : null,
-                          })
-                        }
-                        className="rounded-lg border border-slate-200 bg-white/90 px-3 py-2 text-slate-900 shadow-sm focus:border-indigo-400 focus:outline-none dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-100"
-                      >
-                        <option value="">選択してください</option>
-                        {units.map((unit) => (
-                          <option key={unit.id} value={unit.id} disabled={usedUnitIds.includes(unit.id)}>
-                            {unit.code} / {unit.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="flex flex-col gap-2 text-sm text-slate-600 dark:text-slate-300">
-                      役割
-                      <select
-                        value={membership.role}
-                        onChange={(event) =>
-                          handleMembershipChange(membership.id, {
-                            role: event.target.value as 'leader' | 'member',
-                          })
-                        }
-                        className="rounded-lg border border-slate-200 bg-white/90 px-3 py-2 text-slate-900 shadow-sm focus:border-indigo-400 focus:outline-none dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-100"
-                      >
-                        <option value="leader">リーダー</option>
-                        <option value="member">メンバー</option>
-                      </select>
-                    </label>
-                    <div className="flex items-center justify-end gap-3">
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveMembership(membership.id)}
-                        className="inline-flex items-center rounded-full border border-rose-200 px-3 py-1 text-xs font-semibold text-rose-600 transition hover:bg-rose-50 dark:border-rose-500/50 dark:text-rose-300 dark:hover:bg-rose-500/10"
-                      >
-                        削除
-                      </button>
-                    </div>
-                  </div>
-                  <p className="mt-2 text-xs text-slate-400 dark:text-slate-500">#{index + 1}</p>
-                </div>
-              )
-            })}
-          </div>
-        </section>
+        
 
         <div className="flex justify-end gap-3">
           <Link

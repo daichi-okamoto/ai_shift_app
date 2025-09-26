@@ -13,8 +13,6 @@ export type AuthUser = {
   role: string
   role_label?: string | null
   employment_type: string
-  can_night_shift: boolean
-  contract_hours_per_week: number | null
   organization: {
     id: number
     name: string
@@ -44,10 +42,6 @@ export type RegisterPayload = {
   email: string
   password: string
   password_confirmation: string
-  role: 'admin' | 'leader' | 'member'
-  employment_type: 'full_time' | 'part_time' | 'contract'
-  can_night_shift: boolean
-  contract_hours_per_week: number | null
   organization_code: string
   organization_name?: string
 }
@@ -56,7 +50,7 @@ export type UnitMember = {
   id: number
   name: string
   role: string
-  can_night_shift: boolean
+  employment_type?: string | null
   allowed_shift_types?: Array<{
     id: number
     code: string

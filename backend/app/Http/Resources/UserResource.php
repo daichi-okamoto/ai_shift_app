@@ -53,8 +53,6 @@ class UserResource extends JsonResource
             'role' => $this->role?->value ?? $this->role,
             'role_label' => $this->role?->label() ?? null,
             'employment_type' => $this->employment_type,
-            'can_night_shift' => (bool) $this->can_night_shift,
-            'contract_hours_per_week' => $this->contract_hours_per_week,
             'organization' => $this->organization ? [
                 'id' => $this->organization->id,
                 'name' => $this->organization->name,
