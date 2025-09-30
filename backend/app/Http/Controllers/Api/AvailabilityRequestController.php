@@ -6,8 +6,11 @@ use App\Enums\UserRole;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\AvailabilityRequestStoreRequest;
 use App\Http\Resources\AvailabilityRequestResource;
+use App\Models\AvailabilityReminderTask;
 use App\Models\AvailabilityRequest;
+use App\Models\Membership;
 use App\Models\Unit;
+use App\Models\User;
 use App\Services\AvailabilityScheduleService;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\JsonResponse;
@@ -61,7 +64,24 @@ class AvailabilityRequestController extends Controller
         $this->ensureCanAccessUnit($unit, $user);
 
         $payload = $request->validated();
-        $payload['user_id'] = $user->id;
+
+        $targetUser = $user;
+
+        if ($request->filled('user_id')) {
+            $userId = (int) $request->input('user_id');
+
+            if ($userId !== $user->id) {
+                if ($user->role === UserRole::Admin) {
+                    $targetUser = $this->resolveTargetUser($user, $unit, $userId);
+                } elseif ($user->role === UserRole::Leader) {
+                    $targetUser = $this->resolveTargetUser($user, $unit, $userId);
+                } else {
+                    abort(403, 'You are not allowed to submit on behalf of other members.');
+                }
+            }
+        }
+
+        $payload['user_id'] = $targetUser->id;
         $payload['unit_id'] = $unit->id;
 
         $availability = AvailabilityRequest::create($payload);
@@ -81,7 +101,10 @@ class AvailabilityRequestController extends Controller
             abort(404);
         }
 
-        $mayDelete = $user->role === UserRole::Admin || $availabilityRequest->user_id === $user->id;
+        $mayDelete = $user->role === UserRole::Admin
+            || $availabilityRequest->user_id === $user->id
+            || ($user->role === UserRole::Leader
+                && $user->memberships()->where('unit_id', $unit->id)->exists());
 
         if (! $mayDelete) {
             abort(403, 'You are not allowed to delete this request.');
@@ -121,6 +144,15 @@ class AvailabilityRequestController extends Controller
 
         $refresh = $service->compute($periodData['period']);
 
+        AvailabilityReminderTask::query()
+            ->where('unit_id', $unit->id)
+            ->where('period', $periodData['period'])
+            ->where('status', 'pending')
+            ->update([
+                'status' => 'sent',
+                'triggered_at' => CarbonImmutable::now(),
+            ]);
+
         return response()->json([
             'data' => $refresh,
         ]);
@@ -152,5 +184,27 @@ class AvailabilityRequestController extends Controller
     private function defaultScopeFor($user): string
     {
         return in_array($user->role, [UserRole::Admin, UserRole::Leader], true) ? 'unit' : 'self';
+    }
+
+    private function resolveTargetUser(User $actor, Unit $unit, int $targetUserId): User
+    {
+        $target = User::query()
+            ->where('organization_id', $actor->organization_id)
+            ->find($targetUserId);
+
+        if (! $target) {
+            abort(404, 'The specified member could not be found.');
+        }
+
+        $isMember = Membership::query()
+            ->where('unit_id', $unit->id)
+            ->where('user_id', $target->id)
+            ->exists();
+
+        if (! $isMember) {
+            abort(422, '指定した従業員はこのユニットに所属していません。');
+        }
+
+        return $target;
     }
 }

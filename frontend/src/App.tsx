@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import AppShell from './components/AppShell'
 import LoadingScreen from './components/LoadingScreen'
 import { useAuth } from './features/auth/AuthContext'
+import AvailabilityLandingPage from './pages/AvailabilityLandingPage'
 import AvailabilityRequestPage from './pages/AvailabilityRequestPage'
 import DashboardPage from './pages/DashboardPage'
 import EmployeeFormPage from './pages/EmployeeFormPage'
@@ -24,6 +25,7 @@ function App() {
       <Route path="/register" element={user ? <Navigate to="/" replace /> : <RegisterPage />} />
       <Route element={user ? <AppShell /> : <Navigate to="/login" replace />}>
         <Route index element={<DashboardPage />} />
+        <Route path="availability" element={<AvailabilityLandingPage />} />
         <Route path="units/:unitId" element={<UnitSchedulePage />} />
         <Route path="units/:unitId/availability" element={<AvailabilityRequestPage />} />
         <Route

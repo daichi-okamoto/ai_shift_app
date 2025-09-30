@@ -667,6 +667,7 @@ const UnitSchedulePage = () => {
     Array<{ date: string; shift_code: string; missing: number }>
   >([])
   const [latestConflicts, setLatestConflicts] = useState<Array<Record<string, unknown>>>([])
+  const [expandedAllowedShifts, setExpandedAllowedShifts] = useState<Record<number, boolean>>({})
   const [autoGenOptions, setAutoGenOptions] = useState<AutoGenerateOptions>(
     () => ({ ...BASE_AUTO_GENERATE_OPTIONS }),
   )
@@ -1016,6 +1017,25 @@ const UnitSchedulePage = () => {
 
     return totals
   }, [holidaysMap, members, resolveCellCode, summaryDates])
+
+  useEffect(() => {
+    setExpandedAllowedShifts((prev) => {
+      const next: Record<number, boolean> = {}
+      members.forEach((member) => {
+        if (prev[member.id]) {
+          next[member.id] = true
+        }
+      })
+      return next
+    })
+  }, [members])
+
+  const toggleAllowedShiftVisibility = useCallback((memberId: number) => {
+    setExpandedAllowedShifts((prev) => ({
+      ...prev,
+      [memberId]: !prev[memberId],
+    }))
+  }, [])
 
   const describeConflict = (conflict: Record<string, unknown>): string => {
     const type = (conflict.type as string | undefined) ?? 'unknown'
@@ -2223,31 +2243,48 @@ const UnitSchedulePage = () => {
                   ? EMPLOYMENT_TYPE_LABELS[member.employment_type] ?? member.employment_type
                   : '雇用区分未設定'
 
+                const isAllowedExpanded = expandedAllowedShifts[member.id] ?? false
+
                 return (
                   <tr key={member.id}>
                     <td className="sticky left-0 z-10 min-w-[220px] rounded-l-2xl border border-white/30 bg-white/70 px-4 py-2 text-sm text-slate-800 shadow-sm backdrop-blur sm:min-w-[200px] lg:min-w-[200px] dark:border-slate-700/60 dark:bg-slate-900/90 dark:text-slate-200 dark:shadow-none">
+                      {allowedShifts.length ? (
+                        <button
+                          type="button"
+                          onClick={() => toggleAllowedShiftVisibility(member.id)}
+                          className={`absolute -top-2 right-2 flex h-6 w-6 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:border-indigo-200 hover:text-indigo-600 dark:border-slate-600 dark:text-slate-300 dark:hover:border-indigo-500/60 dark:hover:text-indigo-200 ${
+                            isAllowedExpanded ? 'bg-slate-100 dark:bg-slate-800/60' : 'bg-white dark:bg-slate-900/70'
+                          }`}
+                          aria-label="勤務可能シフトを切り替え"
+                        >
+                          <span className="text-xs font-semibold">{isAllowedExpanded ? '−' : '+'}</span>
+                        </button>
+                      ) : null}
                       <p className="text-sm font-semibold text-slate-900 dark:text-slate-100 whitespace-nowrap">{member.name}</p>
                       <p className="text-xs text-slate-500 dark:text-slate-400 whitespace-nowrap">
                         {member.role} / {employmentLabel}
                       </p>
-                      <div className="mt-2 flex flex-wrap gap-1">
-                        {allowedShifts.length ? (
-                          allowedShifts.map((type) => {
-                            const tagCode = (type.code ?? '').toUpperCase()
-                            const tagStyle = SHIFT_TAG_STYLES[tagCode] ?? SHIFT_TAG_STYLES.DEFAULT
-                            return (
-                              <span
-                                key={`${member.id}-${type.id}`}
-                                className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[8px] font-semibold ${tagStyle}`}
-                              >
-                                {type.name}
-                              </span>
-                            )
-                          })
-                        ) : (
-                          <span className="text-[10px] text-slate-400 dark:text-slate-500">勤務可能シフトなし</span>
-                        )}
-                      </div>
+                      {allowedShifts.length ? (
+                        <div className={`mt-2 transition-[max-height,opacity] ${isAllowedExpanded ? 'max-h-24 opacity-100' : 'max-h-0 opacity-0'} overflow-hidden`}
+                        >
+                          <div className="flex flex-wrap gap-1">
+                            {allowedShifts.map((type) => {
+                              const tagCode = (type.code ?? '').toUpperCase()
+                              const tagStyle = SHIFT_TAG_STYLES[tagCode] ?? SHIFT_TAG_STYLES.DEFAULT
+                              return (
+                                <span
+                                  key={`${member.id}-${type.id}`}
+                                  className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[8px] font-semibold ${tagStyle}`}
+                                >
+                                  {type.name}
+                                </span>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="mt-1 text-[10px] text-slate-400 dark:text-slate-500">勤務可能シフトなし</div>
+                      )}
                     </td>
                     {dateRange.map((date) => {
                       const cellKey = buildKey(member.id, date)
@@ -2325,7 +2362,7 @@ const UnitSchedulePage = () => {
                           <button
                             type="button"
                             onClick={(event) => handleCellClick(member.id, date, event)}
-                            className={`group flex h-full w-full flex-col gap-1 rounded-2xl px-3 py-4 text-left transition ${
+                            className={`group flex h-full w-full flex-col gap-1 rounded-2xl px-3 py-2 text-left transition ${
                               shiftStyle.bg
                             } ${shiftStyle.hover} ${dayStyle.buttonRing} ${isActive ? 'ring-2 ring-indigo-400/60 dark:ring-indigo-400/70' : ''} ${
                               isPending ? 'border border-indigo-300 dark:border-indigo-500/70' : ''

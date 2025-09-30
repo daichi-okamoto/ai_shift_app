@@ -1,5 +1,11 @@
 import { api } from '../../api/client'
-import type { AvailabilityRequestsResponse, AvailabilityScheduleResponse } from '../../api/types'
+import type {
+  AvailabilityReminderTask,
+  AvailabilityReminderTaskResponse,
+  AvailabilityReminderTasksResponse,
+  AvailabilityRequestsResponse,
+  AvailabilityScheduleResponse,
+} from '../../api/types'
 
 export type AvailabilityRequestQuery = {
   period?: string
@@ -51,4 +57,26 @@ export const sendAvailabilityReminder = async (
   )
 
   return data
+}
+
+export const fetchAvailabilityReminders = async (
+  unitId: number,
+): Promise<AvailabilityReminderTasksResponse> => {
+  const { data } = await api.get<AvailabilityReminderTasksResponse>(
+    `/units/${unitId}/availability-reminders`,
+  )
+
+  return data
+}
+
+export const createAvailabilityReminder = async (
+  unitId: number,
+  payload: { period: string; scheduled_for: string },
+): Promise<AvailabilityReminderTask> => {
+  const { data } = await api.post<AvailabilityReminderTaskResponse>(
+    `/units/${unitId}/availability-reminders`,
+    payload,
+  )
+
+  return data.data
 }

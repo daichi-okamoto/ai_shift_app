@@ -3,6 +3,7 @@
 namespace App\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class AvailabilityRequestStoreRequest extends FormRequest
 {
@@ -27,6 +28,11 @@ class AvailabilityRequestStoreRequest extends FormRequest
             'start_at' => ['nullable', 'date_format:H:i'],
             'end_at' => ['nullable', 'date_format:H:i', 'after_or_equal:start_at'],
             'reason' => ['nullable', 'string', 'max:255'],
+            'user_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('users', 'id'),
+            ],
         ];
     }
 }

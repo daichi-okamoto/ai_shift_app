@@ -191,6 +191,7 @@ export type AvailabilityRequestPayload = {
   start_at?: string | null
   end_at?: string | null
   reason?: string | null
+  user_id?: number
 }
 
 export type AvailabilityRequest = {
@@ -246,6 +247,28 @@ export type AvailabilitySchedule = {
 
 export type AvailabilityScheduleResponse = {
   data: AvailabilitySchedule
+}
+
+export type AvailabilityReminderTask = {
+  id: number
+  unit_id: number
+  period: string
+  scheduled_for: string
+  status: 'pending' | 'sent' | 'skipped'
+  triggered_at: string | null
+  created_at: string | null
+  created_by?: {
+    id: number
+    name: string
+  } | null
+}
+
+export type AvailabilityReminderTasksResponse = {
+  data: AvailabilityReminderTask[]
+}
+
+export type AvailabilityReminderTaskResponse = {
+  data: AvailabilityReminderTask
 }
 
 export type FairnessMemberSummary = {

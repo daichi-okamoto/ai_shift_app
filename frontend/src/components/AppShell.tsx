@@ -67,6 +67,9 @@ const AppShell = () => {
           <NavLink to="/" end className={navLinkClass}>
             ダッシュボード
           </NavLink>
+          <NavLink to="/availability" className={navLinkClass}>
+            勤務希望
+          </NavLink>
           {['admin', 'leader'].includes(user?.role ?? '') ? (
             <NavLink to="/units/manage" className={navLinkClass}>
               ユニット管理

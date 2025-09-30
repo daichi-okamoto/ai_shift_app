@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\AvailabilityReminderTaskController;
 use App\Http\Controllers\Api\AvailabilityRequestController;
 use App\Http\Controllers\Api\EmployeeController;
 use App\Http\Controllers\Api\FairnessPointController;
@@ -49,6 +50,10 @@ Route::middleware('auth:sanctum')->group(function (): void {
         Route::delete('/units/{unit}/availability-requests/{availabilityRequest}', [AvailabilityRequestController::class, 'destroy']);
         Route::get('/units/{unit}/availability-schedule', [AvailabilityRequestController::class, 'schedule']);
         Route::post('/units/{unit}/availability-schedule/remind', [AvailabilityRequestController::class, 'sendReminder']);
+        Route::middleware('role:admin,leader')->group(function (): void {
+            Route::get('/units/{unit}/availability-reminders', [AvailabilityReminderTaskController::class, 'index']);
+            Route::post('/units/{unit}/availability-reminders', [AvailabilityReminderTaskController::class, 'store']);
+        });
 
         Route::get('/fairness/summary', [FairnessPointController::class, 'summary']);
     });

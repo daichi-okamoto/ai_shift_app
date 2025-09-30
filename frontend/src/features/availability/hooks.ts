@@ -4,7 +4,9 @@ import {
   deleteAvailabilityRequest,
   fetchAvailabilityRequests,
   fetchAvailabilitySchedule,
+  fetchAvailabilityReminders,
   sendAvailabilityReminder,
+  createAvailabilityReminder,
 } from './api'
 
 export const useAvailabilityRequestsQuery = (
@@ -22,6 +24,13 @@ export const useAvailabilityScheduleQuery = (unitId: number, period?: string) =>
     queryKey: ['availability', unitId, 'schedule', period ?? 'upcoming'],
     queryFn: () => fetchAvailabilitySchedule(unitId, period),
     enabled: Number.isFinite(unitId),
+  })
+
+export const useAvailabilityRemindersQuery = (unitId: number, enabled = true) =>
+  useQuery({
+    queryKey: ['availability', unitId, 'reminders'],
+    queryFn: () => fetchAvailabilityReminders(unitId),
+    enabled: enabled && Number.isFinite(unitId),
   })
 
 export const useDeleteAvailabilityRequestMutation = (unitId: number) => {
@@ -43,6 +52,19 @@ export const useSendAvailabilityReminderMutation = (unitId: number, period?: str
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['availability', unitId, 'schedule'] })
       queryClient.invalidateQueries({ queryKey: ['availability', unitId, 'requests'] })
+      queryClient.invalidateQueries({ queryKey: ['availability', unitId, 'reminders'] })
+    },
+  })
+}
+
+export const useCreateAvailabilityReminderMutation = (unitId: number) => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: { period: string; scheduled_for: string }) =>
+      createAvailabilityReminder(unitId, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['availability', unitId, 'reminders'] })
+      queryClient.invalidateQueries({ queryKey: ['availability', unitId, 'schedule'] })
     },
   })
 }
