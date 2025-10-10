@@ -15,6 +15,7 @@ class AvailabilityReminderTask extends Model
         'period',
         'scheduled_for',
         'status',
+        'message',
         'triggered_at',
         'created_by',
     ];

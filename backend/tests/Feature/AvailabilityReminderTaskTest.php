@@ -10,6 +10,7 @@ use App\Models\User;
 use Carbon\Carbon;
 use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
 class AvailabilityReminderTaskTest extends TestCase
@@ -44,14 +45,18 @@ class AvailabilityReminderTaskTest extends TestCase
         $period = CarbonImmutable::now()->addMonth()->format('Y-m');
         $scheduledFor = CarbonImmutable::now()->addDays(5)->format('Y-m-d');
 
+        $message = 'テスト用の自動リマインドです。Slack通知を確認してください。';
+
         $response = $this->actingAs($admin)->postJson("/api/units/{$unit->id}/availability-reminders", [
             'period' => $period,
             'scheduled_for' => $scheduledFor,
+            'message' => $message,
         ]);
 
         $response->assertCreated();
         $response->assertJsonPath('data.period', $period);
         $response->assertJsonPath('data.scheduled_for', $scheduledFor);
+        $response->assertJsonPath('data.message', $message);
 
         $task = AvailabilityReminderTask::first();
         $this->assertNotNull($task);
@@ -59,6 +64,7 @@ class AvailabilityReminderTaskTest extends TestCase
         $this->assertSame($period, $task->period);
         $this->assertSame($scheduledFor, $task->scheduled_for->toDateString());
         $this->assertSame('pending', $task->status);
+        $this->assertSame($message, $task->message);
     }
 
     public function test_member_cannot_schedule_reminder_task(): void
@@ -90,11 +96,23 @@ class AvailabilityReminderTaskTest extends TestCase
             'organization_id' => $organization->id,
         ]);
 
+        $organization->settings = [
+            'availability' => [
+                'slack_webhook_url' => 'https://hooks.slack.test/example',
+            ],
+        ];
+        $organization->save();
+
+        Http::fake([
+            'https://hooks.slack.test/*' => Http::response(['ok' => true], 200),
+        ]);
+
         $task = AvailabilityReminderTask::create([
             'unit_id' => $unit->id,
             'period' => CarbonImmutable::now()->addMonth()->format('Y-m'),
             'scheduled_for' => $today,
             'status' => 'pending',
+            'message' => 'Slack へ送信テスト',
         ]);
 
         $this->artisan('availability:send-reminders')
@@ -104,5 +122,11 @@ class AvailabilityReminderTaskTest extends TestCase
         $task->refresh();
         $this->assertSame('sent', $task->status);
         $this->assertNotNull($task->triggered_at);
+
+        Http::assertSentCount(1);
+        Http::assertSent(function ($request) {
+            return str_contains($request->url(), 'hooks.slack.test')
+                && $request['text'] === 'Slack へ送信テスト';
+        });
     }
 }

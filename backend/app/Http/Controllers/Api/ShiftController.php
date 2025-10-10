@@ -72,6 +72,7 @@ class ShiftController extends Controller
                     'name' => $user->name,
                     'role' => $membership->role,
                     'employment_type' => $user->employment_type,
+                    'display_order' => $membership->display_order,
                     'allowed_shift_types' => $user->allowedShiftTypes
                         ? $user->allowedShiftTypes
                             ->map(fn ($shiftType) => [

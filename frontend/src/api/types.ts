@@ -50,6 +50,7 @@ export type UnitMember = {
   id: number
   name: string
   role: string
+  display_order?: number | null
   employment_type?: string | null
   allowed_shift_types?: Array<{
     id: number
@@ -140,6 +141,7 @@ export type ShiftResponse = {
       start_date: string
       end_date: string
     }
+    members: UnitMember[]
   }
 }
 

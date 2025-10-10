@@ -35,14 +35,18 @@ class UnitResource extends JsonResource
                 'email' => $leaderMembership->user->email,
             ] : null,
             'members' => $memberships instanceof \Illuminate\Support\Collection
-                ? $memberships->map(function ($membership) {
-                    return [
-                        'id' => $membership->user->id,
-                        'name' => $membership->user->name,
-                        'role' => $membership->role,
-                        'employment_type' => $membership->user->employment_type,
-                    ];
-                })->values()->all()
+                ? $memberships
+                    ->map(function ($membership) {
+                        return [
+                            'id' => $membership->user->id,
+                            'name' => $membership->user->name,
+                            'role' => $membership->role,
+                            'employment_type' => $membership->user->employment_type,
+                            'display_order' => $membership->display_order,
+                        ];
+                    })
+                    ->values()
+                    ->all()
                 : [],
         ];
     }

@@ -146,6 +146,7 @@ cd ..
 - 締切後も変更可（代理登録含む）
 - 休暇申請は承認不要で自動反映
 - 管理者／リーダーはリマインド日を予約でき、指定日に未申請者へ自動リマインドが送信される
+- Slack の Incoming Webhook URL を `organization.settings.availability.slack_webhook_url` に設定すると、自動リマインド送信と同時に Slack へも通知されます。メッセージはリマインド登録時にカスタマイズ可能です。
 
 #### 4.4 作成方法
 - 手動作成：ドラッグ＆ドロップで割り当て
@@ -235,3 +236,11 @@ flowchart LR
 - コマンド: `php artisan availability:send-reminders`
 - Laravel スケジューラで毎日 08:00 (JST) に実行されるよう `bootstrap/app.php` に設定済みです。
 - 本番環境では `* * * * * php /path/to/artisan schedule:run` を設定し、スケジューラが稼働するようにしてください。
+- Slack 通知を利用する場合は、組織設定 (`organizations.settings`) に以下のような JSON を保存してください。
+  ```json
+  {
+    "availability": {
+      "slack_webhook_url": "https://hooks.slack.com/services/..."
+    }
+  }
+  ```

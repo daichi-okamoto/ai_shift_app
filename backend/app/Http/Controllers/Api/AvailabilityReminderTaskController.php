@@ -37,6 +37,7 @@ class AvailabilityReminderTaskController extends Controller
         $validator = Validator::make($request->all(), [
             'period' => ['required', 'regex:/^\d{4}-\d{2}$/'],
             'scheduled_for' => ['required', 'date'],
+            'message' => ['nullable', 'string', 'max:2000'],
         ]);
 
         $validator->validate();
@@ -58,6 +59,11 @@ class AvailabilityReminderTaskController extends Controller
             abort(422, '過去の日付は指定できません。');
         }
 
+        $defaultMessage = sprintf(
+            '%s の希望・休暇申請が未提出の方は提出をお願いします。',
+            $payload['period'],
+        );
+
         $task = AvailabilityReminderTask::updateOrCreate(
             [
                 'unit_id' => $unit->id,
@@ -68,6 +74,7 @@ class AvailabilityReminderTaskController extends Controller
                 'status' => 'pending',
                 'triggered_at' => null,
                 'created_by' => $user->id,
+                'message' => $payload['message'] ?? $defaultMessage,
             ],
         );
 

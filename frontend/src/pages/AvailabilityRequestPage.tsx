@@ -1,5 +1,5 @@
 import type { FormEvent } from 'react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../features/auth/AuthContext'
@@ -69,18 +69,39 @@ const AvailabilityRequestPage = () => {
   const [success, setSuccess] = useState<string | null>(null)
   const [applicantId, setApplicantId] = useState<number | null>(user?.id ?? null)
   const [activeDate, setActiveDate] = useState<string | null>(null)
+  const [selectedPeriod, setSelectedPeriod] = useState<string | undefined>(undefined)
+  const [periodInputValue, setPeriodInputValue] = useState('')
   const [popoverAnchor, setPopoverAnchor] = useState<{
     left: number
     top: number
     width: number
     height: number
   } | null>(null)
+  const popoverRef = useRef<HTMLDivElement | null>(null)
+  const [popoverStyle, setPopoverStyle] = useState<{
+    left: number
+    top: number
+    width: number
+  } | null>(null)
   const [reminderDate, setReminderDate] = useState('')
+  const [reminderMessage, setReminderMessage] = useState('')
+  const [draftSelections, setDraftSelections] = useState<
+    Record<
+      string,
+      {
+        type: 'wish' | 'unavailable' | 'vacation'
+        start_at: string | null
+        end_at: string | null
+        reason: string | null
+      }
+    >
+  >({})
+  const [isBatchSubmitting, setIsBatchSubmitting] = useState(false)
 
   const dayButtonRefs = useRef(new Map<string, HTMLButtonElement>())
 
-  const isUnitMember = useMemo(
-    () => user?.memberships?.some((membership) => membership.unit_id === unitId) ?? false,
+  const isUnitLeader = useMemo(
+    () => user?.memberships?.some((membership) => membership.unit_id === unitId && membership.role === 'leader') ?? false,
     [unitId, user?.memberships],
   )
 
@@ -91,30 +112,27 @@ const AvailabilityRequestPage = () => {
     if (user.role === 'admin') {
       return true
     }
-    if (user.role === 'leader') {
-      return isUnitMember
-    }
-    return false
-  }, [isUnitMember, user])
+    return isUnitLeader
+  }, [isUnitLeader, user])
 
   const canViewUnit = useMemo(
-    () => ['admin', 'leader'].includes(user?.role ?? ''),
-    [user?.role],
+    () => (user?.role === 'admin' ? true : isUnitLeader),
+    [isUnitLeader, user?.role],
   )
 
   const [scope, setScope] = useState<'self' | 'unit'>(canViewUnit ? 'unit' : 'self')
   const [memberId, setMemberId] = useState<number | undefined>(undefined)
 
-  const scheduleQuery = useAvailabilityScheduleQuery(unitId)
+  const scheduleQuery = useAvailabilityScheduleQuery(unitId, selectedPeriod)
   const period = scheduleQuery.data?.data.period
 
   const requestParams = useMemo(
     () => ({
-      period,
+      period: selectedPeriod ?? period,
       scope,
       memberId,
     }),
-    [memberId, period, scope],
+    [memberId, period, scope, selectedPeriod],
   )
 
   const requestsQuery = useAvailabilityRequestsQuery(unitId, requestParams)
@@ -336,16 +354,83 @@ const AvailabilityRequestPage = () => {
     }
   }, [applicantId, applicantOptions, canProxyForUnit, user?.id])
 
+  const currentApplicantName = useMemo(() => {
+    if (!canProxyForUnit) {
+      return user?.name ?? '自分'
+    }
+
+    if (!applicantId) {
+      return user?.name ?? '自分'
+    }
+
+    return (
+      applicantOptions.find((option) => option.id === applicantId)?.name ?? user?.name ?? '自分'
+    )
+  }, [applicantId, applicantOptions, canProxyForUnit, user?.name])
+
   const selectedRequest = useMemo(() => {
     if (!activeDate) return null
     const targetUserId = applicantId ?? user?.id
     if (!targetUserId) return null
     const requests = requestsByDate.get(activeDate) ?? []
-    return requests.find((req) => req.user_id === targetUserId) ?? null
-  }, [activeDate, applicantId, requestsByDate, user?.id])
+    const apiRequest = requests.find((req) => req.user_id === targetUserId)
+    if (apiRequest) {
+      return apiRequest
+    }
 
-  const reminderTasks = remindersQuery.data?.data ?? []
+    const draft = draftSelections[activeDate]
+    if (!draft) {
+      return null
+    }
+
+    return {
+      id: 0,
+      unit_id: unitId,
+      user_id: targetUserId,
+      work_date: activeDate,
+      type: draft.type,
+      start_at: draft.start_at,
+      end_at: draft.end_at,
+      status: 'draft',
+      reason: draft.reason,
+      created_at: null,
+      user: {
+        id: targetUserId,
+        name: currentApplicantName,
+        role: user?.role ?? null,
+        email: user?.email ?? null,
+      },
+    } satisfies AvailabilityRequest
+  }, [activeDate, applicantId, currentApplicantName, draftSelections, requestsByDate, unitId, user?.email, user?.id, user?.role])
+
+  const draftForActiveDate = activeDate ? draftSelections[activeDate] ?? null : null
+  const pendingDraftCount = useMemo(() => Object.keys(draftSelections).length, [draftSelections])
+  const draftSummaryText = useMemo(() => {
+    if (!draftForActiveDate) {
+      return null
+    }
+
+    const baseLabel =
+      draftForActiveDate.type === 'vacation'
+        ? '休み希望'
+        : draftForActiveDate.type === 'unavailable'
+          ? '勤務不可'
+          : draftForActiveDate.reason?.trim() || '希望勤務'
+
+    const timeLabel =
+      draftForActiveDate.start_at || draftForActiveDate.end_at
+        ? `${draftForActiveDate.start_at ?? '--:--'}〜${draftForActiveDate.end_at ?? '--:--'}`
+        : null
+
+    if (timeLabel) {
+      return `${baseLabel}（${timeLabel}）`
+    }
+
+    return baseLabel
+  }, [draftForActiveDate])
+
   const reminderTasksForPeriod = useMemo(() => {
+    const reminderTasks = remindersQuery.data?.data ?? []
     const periodKey = scheduleQuery.data?.data?.period
     if (!periodKey) {
       return [] as typeof reminderTasks
@@ -353,7 +438,37 @@ const AvailabilityRequestPage = () => {
     return reminderTasks
       .filter((task) => task.period === periodKey)
       .sort((a, b) => a.scheduled_for.localeCompare(b.scheduled_for))
-  }, [reminderTasks, scheduleQuery.data?.data?.period])
+  }, [remindersQuery.data?.data, scheduleQuery.data?.data?.period])
+
+  useEffect(() => {
+    if (reminderMessage || !reminderTasksForPeriod.length) {
+      return
+    }
+
+    const latest = [...reminderTasksForPeriod].reverse().find((task) => task.message)
+    if (latest?.message) {
+      setReminderMessage(latest.message)
+    }
+  }, [reminderMessage, reminderTasksForPeriod])
+
+  useEffect(() => {
+    const remotePeriod = scheduleQuery.data?.data.period
+    if (!remotePeriod) {
+      return
+    }
+
+    setPeriodInputValue(remotePeriod)
+    if (!selectedPeriod) {
+      setSelectedPeriod(remotePeriod)
+    }
+  }, [scheduleQuery.data?.data.period, selectedPeriod])
+
+  useEffect(() => {
+    setSelectedPeriod(undefined)
+    setPeriodInputValue('')
+    setActiveDate(null)
+    setDraftSelections({})
+  }, [unitId])
 
   const closePopover = () => {
     setPopoverAnchor(null)
@@ -387,6 +502,15 @@ const AvailabilityRequestPage = () => {
     setPopoverAnchor(anchor)
 
     const targetUserId = applicantId ?? user?.id
+    const draft = draftSelections[dateString]
+    if (draft) {
+      setType(draft.type)
+      setStartAt(draft.start_at ?? '')
+      setEndAt(draft.end_at ?? '')
+      setReason(draft.reason ?? '')
+      return
+    }
+
     const existing = targetUserId
       ? (requestsByDate.get(dateString) ?? []).find((req) => req.user_id === targetUserId)
       : null
@@ -460,68 +584,55 @@ const AvailabilityRequestPage = () => {
     }
   }, [popoverAnchor, activeDate])
 
-  const isSubmitting = mutation.isPending || deleteMutation.isPending
+  const isSubmitting = mutation.isPending || deleteMutation.isPending || isBatchSubmitting
 
-  const submitRequest = async (options?: {
-    type?: 'wish' | 'unavailable' | 'vacation'
-    start?: string | null
-    end?: string | null
-    note?: string | null
+  const submitRequest = async ({
+    date,
+    draft,
+    submitUserId,
+  }: {
+    date: string
+    draft: {
+      type: 'wish' | 'unavailable' | 'vacation'
+      start_at: string | null
+      end_at: string | null
+      reason: string | null
+    }
+    submitUserId: number
   }) => {
     if (!isValidUnitId) {
-      setError('ユニットが見つかりませんでした。')
-      return
+      throw new Error('ユニットが見つかりませんでした。')
     }
 
-    if (!activeDate) {
-      setError('希望日を選択してください。')
-      return
+    const payloadType = draft.type ?? 'wish'
+    const payloadStart = draft.start_at ?? null
+    const payloadEnd = draft.end_at ?? null
+    const payloadReason = draft.reason ?? null
+
+    if (payloadType !== 'vacation' && payloadStart && payloadEnd && payloadStart >= payloadEnd) {
+      throw new Error('終了時刻は開始時刻より後に設定してください。')
     }
 
-    const submitUserId = canProxyForUnit ? applicantId ?? user?.id ?? null : user?.id ?? null
+    const existing = (requestsByDate.get(date) ?? []).find((req) => req.user_id === submitUserId)
 
-    if (!submitUserId) {
-      setError('申請者を選択してください。')
-      return
+    if (existing && typeof existing.id === 'number' && existing.id > 0) {
+      await deleteMutation.mutateAsync(existing.id)
     }
 
-    const payloadType = options?.type ?? type
-    const payloadStart = options?.start === undefined ? (startAt ? startAt : null) : options.start
-    const payloadEnd = options?.end === undefined ? (endAt ? endAt : null) : options.end
-    const payloadReason = options?.note === undefined ? (reason || null) : options.note
+    await mutation.mutateAsync({
+      work_date: date,
+      type: payloadType,
+      start_at: payloadStart,
+      end_at: payloadEnd,
+      reason: payloadReason,
+      user_id: submitUserId,
+    })
 
-    if (
-      payloadType !== 'vacation' &&
-      payloadStart &&
-      payloadEnd &&
-      payloadStart >= payloadEnd
-    ) {
-      setError('終了時刻は開始時刻より後に設定してください。')
-      return
-    }
-
-    try {
-      setError(null)
-
-      if (selectedRequest && selectedRequest.user_id === submitUserId) {
-        await deleteMutation.mutateAsync(selectedRequest.id)
-      }
-
-      await mutation.mutateAsync({
-        work_date: activeDate,
-        type: payloadType,
-        start_at: payloadStart,
-        end_at: payloadEnd,
-        reason: payloadReason,
-        user_id: submitUserId,
-      })
-
-      setSuccess(`${dateLabelFormatter.format(new Date(`${activeDate}T00:00:00`))} の申請を登録しました。`)
-      closePopover()
-    } catch (err) {
-      console.error(err)
-      setError('申請の登録に失敗しました。入力内容を確認してください。')
-    }
+    setDraftSelections((prev) => {
+      const next = { ...prev }
+      delete next[date]
+      return next
+    })
   }
 
   const handleDeleteSelected = async () => {
@@ -530,8 +641,19 @@ const AvailabilityRequestPage = () => {
     }
 
     try {
-      await deleteMutation.mutateAsync(selectedRequest.id)
-      setSuccess('申請を削除しました。')
+      if (typeof selectedRequest.id === 'number' && selectedRequest.id > 0) {
+        await deleteMutation.mutateAsync(selectedRequest.id)
+        setSuccess('申請を削除しました。')
+      }
+
+      if (activeDate) {
+        setDraftSelections((prev) => {
+          const next = { ...prev }
+          delete next[activeDate]
+          return next
+        })
+      }
+
       closePopover()
     } catch (err) {
       console.error(err)
@@ -545,6 +667,7 @@ const AvailabilityRequestPage = () => {
     setStartAt('')
     setEndAt('')
     setReason('')
+    setDraftSelections({})
     closePopover()
   }
 
@@ -559,27 +682,145 @@ const AvailabilityRequestPage = () => {
     button?.focus()
   }
 
+  const handlePeriodChange = (value: string) => {
+    setPeriodInputValue(value)
+    setSelectedPeriod(value || undefined)
+    setActiveDate(null)
+    setDraftSelections({})
+    setSuccess(null)
+    setError(null)
+  }
+
+  const updateDraftSelection = (
+    changes: Partial<{
+      type: 'wish' | 'unavailable' | 'vacation'
+      start_at: string | null
+      end_at: string | null
+      reason: string | null
+    }>,
+  ) => {
+    if (!activeDate) {
+      return
+    }
+
+    setDraftSelections((prev) => {
+      const existing = prev[activeDate] ?? {
+        type,
+        start_at: startAt || null,
+        end_at: endAt || null,
+        reason: reason || null,
+      }
+
+      return {
+        ...prev,
+        [activeDate]: {
+          ...existing,
+          ...changes,
+        },
+      }
+    })
+  }
+
   const applyPreset = (code: 'EARLY' | 'DAY' | 'LATE' | 'NIGHT') => {
+    if (!activeDate) return
     const times = getShiftTimes(code)
     const label = SHIFT_LABELS[code]
     setType('wish')
     setStartAt(times.start)
     setEndAt(times.end)
     setReason(`${label}希望`)
-    void submitRequest({ type: 'wish', start: times.start, end: times.end, note: `${label}希望` })
+    updateDraftSelection({
+      type: 'wish',
+      start_at: times.start,
+      end_at: times.end,
+      reason: `${label}希望`,
+    })
   }
 
   const applyOff = () => {
+    if (!activeDate) return
     setType('vacation')
     setStartAt('')
     setEndAt('')
     setReason('休み希望')
-    void submitRequest({ type: 'vacation', start: null, end: null, note: '休み希望' })
+    updateDraftSelection({
+      type: 'vacation',
+      start_at: null,
+      end_at: null,
+      reason: '休み希望',
+    })
   }
 
-  const handleSubmitCustom = () => {
+  const applyCustomTime = () => {
     setType('wish')
-    void submitRequest({ type: 'wish' })
+    updateDraftSelection({
+      type: 'wish',
+      start_at: startAt ? startAt : null,
+      end_at: endAt ? endAt : null,
+      reason: reason || null,
+    })
+  }
+
+  const handleConfirmSubmission = () => {
+    const entries = Object.entries(draftSelections)
+      .map(([date, draft]) => ({ date, draft }))
+      .filter(({ draft }) => draft != null)
+
+    if (entries.length === 0) {
+      setError('申請内容が設定されていません。')
+      return
+    }
+
+    const submitUserId = canProxyForUnit ? applicantId ?? user?.id ?? null : user?.id ?? null
+
+    if (!submitUserId) {
+      setError('申請者を選択してください。')
+      return
+    }
+
+    const message =
+      entries.length === 1
+        ? 'この内容でシフト希望を申請してよろしいですか？'
+        : `${entries.length}件の希望を申請します。よろしいですか？`
+
+    if (!window.confirm(message)) {
+      return
+    }
+
+    const submitAll = async () => {
+      try {
+        setIsBatchSubmitting(true)
+        setError(null)
+
+        for (const { date, draft } of entries) {
+          await submitRequest({
+            date,
+            draft: {
+              type: draft.type,
+              start_at: draft.start_at,
+              end_at: draft.end_at,
+              reason: draft.reason,
+            },
+            submitUserId,
+          })
+        }
+
+        setSuccess(`${entries.length}件の申請を登録しました。`)
+        setActiveDate(null)
+        setType('wish')
+        setStartAt('')
+        setEndAt('')
+        setReason('')
+        closePopover()
+      } catch (err) {
+        console.error(err)
+        setError('申請の登録に失敗しました。入力内容を確認してください。')
+      } finally {
+        setIsBatchSubmitting(false)
+      }
+    }
+
+    void submitAll()
   }
 
   const handleCreateReminderTask = async (event: FormEvent<HTMLFormElement>) => {
@@ -601,37 +842,82 @@ const AvailabilityRequestPage = () => {
     }
 
     try {
+      setError(null)
       await createReminderMutation.mutateAsync({
         period: schedule.period,
         scheduled_for: reminderDate,
+        message: reminderMessage || undefined,
       })
       const label = reminderDateFormatter.format(new Date(`${reminderDate}T00:00:00`))
       setSuccess(`${label} に自動リマインドを登録しました。`)
+      setReminderMessage('')
     } catch (err) {
       console.error(err)
       setError('自動リマインドの登録に失敗しました。')
     }
   }
 
-  const popoverPosition = useMemo(() => {
-    if (!popoverAnchor || typeof window === 'undefined') {
-      return null
+  const calculatePopoverPosition = useCallback(
+    (height?: number | null) => {
+      if (!popoverAnchor || typeof window === 'undefined') {
+        return null
+      }
+
+      const margin = 16
+      const width = Math.min(360, window.innerWidth - margin * 2)
+      let left = popoverAnchor.left + popoverAnchor.width / 2 - width / 2
+      left = Math.max(window.scrollX + margin, Math.min(left, window.scrollX + window.innerWidth - width - margin))
+
+      const fallbackHeight = height && Number.isFinite(height) ? height : 400
+      const safeHeight = Math.min(fallbackHeight, window.innerHeight - margin * 2)
+
+      let top = popoverAnchor.top + popoverAnchor.height + 12
+      const maxTop = window.scrollY + window.innerHeight - margin - safeHeight
+      if (top > maxTop) {
+        top = Math.max(window.scrollY + margin, popoverAnchor.top - 12 - safeHeight)
+      }
+
+      return { left, top, width }
+    },
+    [popoverAnchor],
+  )
+
+  useEffect(() => {
+    if (!popoverAnchor) {
+      setPopoverStyle(null)
+      return
     }
-
-    const margin = 16
-    const width = Math.min(320, window.innerWidth - margin * 2)
-    let left = popoverAnchor.left + popoverAnchor.width / 2 - width / 2
-    left = Math.max(window.scrollX + margin, Math.min(left, window.scrollX + window.innerWidth - width - margin))
-
-    const estimatedHeight = 360
-    let top = popoverAnchor.top + popoverAnchor.height + 12
-    const maxTop = window.scrollY + window.innerHeight - margin - estimatedHeight
-    if (top > maxTop) {
-      top = Math.max(window.scrollY + margin, popoverAnchor.top - 12 - estimatedHeight)
+    const next = calculatePopoverPosition(null)
+    if (next) {
+      setPopoverStyle(next)
     }
+  }, [calculatePopoverPosition, popoverAnchor])
 
-    return { left, top, width }
-  }, [popoverAnchor])
+  useLayoutEffect(() => {
+    if (!popoverAnchor) {
+      return
+    }
+    const node = popoverRef.current
+    if (!node) {
+      return
+    }
+    const rect = node.getBoundingClientRect()
+    setPopoverStyle((prev) => {
+      const next = calculatePopoverPosition(rect.height)
+      if (!next) {
+        return prev
+      }
+      if (
+        prev &&
+        Math.abs(prev.left - next.left) < 0.5 &&
+        Math.abs(prev.top - next.top) < 0.5 &&
+        Math.abs(prev.width - next.width) < 0.5
+      ) {
+        return prev
+      }
+      return next
+    })
+  }, [calculatePopoverPosition, popoverAnchor, draftForActiveDate, endAt, reason, selectedRequest, startAt, type])
 
   const activeDateLabel = useMemo(() => {
     if (!activeDate) return null
@@ -653,14 +939,16 @@ const AvailabilityRequestPage = () => {
 
   const handleSendReminder = async () => {
     try {
+      setError(null)
       await reminderMutation.mutateAsync()
+      setSuccess('手動リマインドを送信しました。')
     } catch (err) {
       console.error(err)
       setError('リマインドの送信に失敗しました。')
     }
   }
 
-  if (scheduleQuery.isLoading) {
+  if (scheduleQuery.isLoading && !scheduleQuery.data) {
     return (
       <div className="glass-panel rounded-xl border border-white/25 p-6 text-sm text-slate-600 shadow-lg">
         希望・休暇申請情報を読み込み中です…
@@ -675,8 +963,6 @@ const AvailabilityRequestPage = () => {
       </div>
     )
   }
-
-  const schedule = scheduleQuery.data.data
 
   if (!isValidUnitId) {
     return (
@@ -696,69 +982,28 @@ const AvailabilityRequestPage = () => {
         </p>
       </header>
 
-      <section className="glass-panel rounded-3xl border border-white/20 p-6 shadow-lg">
-        <div className="grid gap-4 md:grid-cols-4">
-          <DeadlineStat
-            title="対象月"
-            value={`${schedule.period_start.slice(0, 7)}`}
-            helper={`${schedule.period_start} 〜 ${schedule.period_end}`}
-          />
-          <DeadlineStat
-            title="提出締切"
-            value={dateFormatter.format(new Date(schedule.deadline_at))}
-            helper={schedule.is_deadline_passed ? '締切を過ぎています' : '締切前'}
-            tone={schedule.is_deadline_passed ? 'warning' : 'info'}
-          />
-          <DeadlineStat
-            title="リマインド"
-            value={dateFormatter.format(new Date(schedule.reminder_at))}
-            helper={
-              schedule.reminder_sent_at
-                ? `${dateFormatter.format(new Date(schedule.reminder_sent_at))} に送信`
-                : schedule.is_reminder_due
-                  ? 'リマインド送信を推奨'
-                  : '自動送信待ち'
-            }
-            tone={schedule.reminder_sent_at ? 'success' : schedule.is_reminder_due ? 'warning' : 'info'}
-          />
-          <DeadlineStat
-            title="未申請"
-            value={`${schedule.pending_members.length} 名`}
-            helper="申請が未完了のメンバー数"
-            tone={schedule.pending_members.length > 0 ? 'warning' : 'success'}
-          />
-        </div>
-        {canViewUnit ? (
-          <div className="mt-4 flex flex-wrap items-center gap-3">
-            <button
-              type="button"
-              onClick={handleSendReminder}
-              disabled={reminderMutation.isPending || Boolean(schedule.reminder_sent_at)}
-              className="rounded-full border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-600 transition hover:bg-indigo-100 disabled:opacity-60"
-            >
-              {schedule.reminder_sent_at ? 'リマインド送信済み' : reminderMutation.isPending ? '送信中…' : '未申請者にリマインド'}
-            </button>
-            {schedule.pending_members.length ? (
-              <span className="text-xs text-slate-500">
-                リマインド対象: {schedule.pending_members.map((member) => member.name).join(', ')}
-              </span>
-            ) : null}
-          </div>
-        ) : null}
-      </section>
-
       {canViewUnit ? (
         <section className="rounded-3xl border border-white/20 bg-white/70 p-6 shadow-lg backdrop-blur dark:border-slate-700/60 dark:bg-slate-900/45">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">自動リマインド</h2>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                未申請メンバーへの自動リマインド送信日を登録できます。指定日に送信されると履歴が自動更新されます。
+                未申請メンバーへの自動リマインド送信日とメッセージを登録できます。Slack Webhook を設定すると自動送信時にメッセージが通知されます。
               </p>
             </div>
-            {remindersQuery.isLoading ? (
-              <span className="text-xs text-slate-400">読み込み中…</span>
-            ) : null}
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleSendReminder}
+                disabled={reminderMutation.isPending}
+                className="rounded-full border border-indigo-200 bg-indigo-50 px-4 py-2 text-xs font-semibold text-indigo-600 transition hover:bg-indigo-100 disabled:opacity-60 dark:border-indigo-500/50 dark:bg-indigo-500/20 dark:text-indigo-200 dark:hover:bg-indigo-500/30"
+              >
+                {reminderMutation.isPending ? '送信中…' : '今すぐリマインドを送信'}
+              </button>
+              {remindersQuery.isLoading ? (
+                <span className="text-xs text-slate-400">読み込み中…</span>
+              ) : null}
+            </div>
           </div>
 
           <form
@@ -784,6 +1029,16 @@ const AvailabilityRequestPage = () => {
                 {createReminderMutation.isPending ? '登録中…' : '自動送信を予約'}
               </button>
             </div>
+            <label className="flex flex-col gap-2 text-xs text-slate-600 dark:text-slate-300">
+              リマインドメッセージ（Slack 通知に利用されます）
+              <textarea
+                value={reminderMessage}
+                onChange={(event) => setReminderMessage(event.target.value)}
+                rows={3}
+                className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:border-indigo-400 focus:outline-none dark:border-slate-600 dark:bg-slate-800/80 dark:text-slate-200"
+                placeholder="例: 〇〇月の希望申請が未提出の方は本日中にご対応ください"
+              />
+            </label>
             <p className="text-[10px] text-slate-400 dark:text-slate-500">
               ※ サーバーのスケジューラー設定（cron）が有効になっている必要があります。
             </p>
@@ -803,12 +1058,15 @@ const AvailabilityRequestPage = () => {
                   >
                     <div>
                       <p className="font-semibold text-slate-700 dark:text-slate-200">{scheduledLabel}</p>
-                      <p className="text-[11px] text-slate-400 dark:text-slate-500">
-                        期間: {task.period}
-                        {task.triggered_at
-                          ? ` ｜ 実行: ${reminderDateFormatter.format(new Date(task.triggered_at))}`
-                          : ''}
-                      </p>
+                      <div className="mt-1 space-y-1 text-[11px] text-slate-400 dark:text-slate-500">
+                        <p>
+                          期間: {task.period}
+                          {task.triggered_at
+                            ? ` ｜ 実行: ${reminderDateFormatter.format(new Date(task.triggered_at))}`
+                            : ''}
+                        </p>
+                        {task.message ? <p className="whitespace-pre-line">{task.message}</p> : null}
+                      </div>
                     </div>
                     <span
                       className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${statusStyle.className}`}
@@ -979,31 +1237,42 @@ const AvailabilityRequestPage = () => {
               希望する日付をクリックして申請内容を設定してください。シフト種別と希望時間をまとめて登録できます。
             </p>
           </div>
-          {canProxyForUnit ? (
-            <label className="text-sm text-slate-600">
-              申請者
-              <select
-                value={applicantId ?? ''}
-                onChange={(event) =>
-                  setApplicantId(event.target.value ? Number(event.target.value) : null)
-                }
-                className="mt-1 w-full glass-input focus:border-indigo-400 focus:outline-none"
-                required
-              >
-                <option value="">選択してください</option>
-                {applicantOptions.map((member) => {
-                  const roleLabel = member.role ? ROLE_LABELS[member.role] ?? member.role : null
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
+            {canProxyForUnit ? (
+              <label className="flex-1 text-sm text-slate-600">
+                申請者
+                <select
+                  value={applicantId ?? ''}
+                  onChange={(event) =>
+                    setApplicantId(event.target.value ? Number(event.target.value) : null)
+                  }
+                  className="mt-1 w-full glass-input focus:border-indigo-400 focus:outline-none"
+                  required
+                >
+                  <option value="">選択してください</option>
+                  {applicantOptions.map((member) => {
+                    const roleLabel = member.role ? ROLE_LABELS[member.role] ?? member.role : null
 
-                  return (
-                    <option key={member.id} value={member.id}>
-                      {member.name}
-                      {roleLabel ? `（${roleLabel}）` : ''}
-                    </option>
-                  )
-                })}
-              </select>
+                    return (
+                      <option key={member.id} value={member.id}>
+                        {member.name}
+                        {roleLabel ? `（${roleLabel}）` : ''}
+                      </option>
+                    )
+                  })}
+                </select>
+              </label>
+            ) : null}
+            <label className="flex items-center gap-2 rounded-full border border-white/40 bg-white/60 px-3 py-1 text-xs text-slate-600 backdrop-blur dark:border-slate-700/60 dark:bg-slate-900/40 dark:text-slate-200 sm:self-end">
+              <span>申請対象月</span>
+              <input
+                type="month"
+                value={periodInputValue}
+                onChange={(event) => handlePeriodChange(event.target.value)}
+                className="rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-600 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-200 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:focus:border-indigo-500 dark:focus:ring-indigo-500/40"
+              />
             </label>
-          ) : null}
+          </div>
           {success ? <p className="text-sm text-emerald-600">{success}</p> : null}
           {error ? <p className="text-sm text-rose-500">{error}</p> : null}
           <div className="grid gap-2">
@@ -1014,7 +1283,43 @@ const AvailabilityRequestPage = () => {
             </div>
             <div className="grid grid-cols-7 gap-2">
               {calendarDays.map((day) => {
-                const requestsForDay = requestsByDate.get(day.dateString) ?? []
+                const activeUserId = applicantId ?? user?.id ?? null
+                const preview = draftSelections[day.dateString]
+                let requestsForDay = [...(requestsByDate.get(day.dateString) ?? [])]
+
+                if (preview && activeUserId !== null) {
+                  requestsForDay = requestsForDay.filter((entry) => entry.user_id !== activeUserId)
+                  requestsForDay.push({
+                    id: -1,
+                    unit_id: unitId,
+                    user_id: activeUserId,
+                    work_date: day.dateString,
+                    type: preview.type,
+                    start_at: preview.start_at,
+                    end_at: preview.end_at,
+                    status: 'draft',
+                    reason: preview.reason,
+                    created_at: null,
+                    user: {
+                      id: applicantId ?? user?.id ?? 0,
+                      name: currentApplicantName,
+                      role: user?.role ?? null,
+                      email: user?.email ?? null,
+                    },
+                  } as AvailabilityRequest)
+                } else if (activeUserId !== null) {
+                  // 自分の既存申請もカレンダーに表示して視覚的なフィードバックを得られるようにする
+                  requestsForDay = requestsForDay.filter((entry, index, array) => {
+                    if (entry.user_id !== activeUserId) {
+                      return true
+                    }
+
+                    const firstIndex = array.findIndex((candidate) => candidate.user_id === activeUserId)
+                    return firstIndex === index
+                  })
+                }
+
+                const hasDraft = Boolean(preview && activeUserId !== null)
                 const isActive = activeDate === day.dateString
                 const baseClasses = day.inMonth
                   ? 'bg-white/70 text-slate-700 hover:border-indigo-300 dark:bg-slate-900/50 dark:text-slate-200'
@@ -1023,6 +1328,9 @@ const AvailabilityRequestPage = () => {
                   ? 'border-2 border-indigo-400 shadow-indigo-200/50 dark:border-indigo-400/80'
                   : 'border border-transparent'
                 const todayRing = day.isToday ? 'ring-1 ring-indigo-200 dark:ring-indigo-500/40' : ''
+                const draftGlow = hasDraft
+                  ? 'ring-2 ring-indigo-300/60 border-indigo-300 dark:ring-indigo-500/50 dark:border-indigo-400/60'
+                  : ''
 
                 return (
                   <button
@@ -1036,7 +1344,7 @@ const AvailabilityRequestPage = () => {
                       }
                     }}
                     onClick={() => openPopoverForDate(day.dateString)}
-                    className={`flex min-h-[88px] flex-col items-start gap-1 rounded-2xl p-2 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 ${baseClasses} ${activeClasses} ${todayRing}`}
+                    className={`flex min-h-[88px] flex-col items-start gap-1 rounded-2xl p-2 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 ${baseClasses} ${activeClasses} ${todayRing} ${draftGlow}`}
                     disabled={!day.inMonth}
                   >
                     <span className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-sm font-semibold ${
@@ -1050,18 +1358,42 @@ const AvailabilityRequestPage = () => {
                     </span>
                     <div className="flex flex-wrap gap-1">
                       {requestsForDay.map((item) => {
-                        const tone =
-                          item.type === 'vacation'
-                            ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/30 dark:text-emerald-200'
-                            : item.type === 'unavailable'
-                              ? 'bg-rose-100 text-rose-700 dark:bg-rose-500/30 dark:text-rose-200'
-                              : 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/30 dark:text-indigo-200'
+                        const isDraft = item.status === 'draft'
+                        const tone = isDraft
+                          ? 'bg-indigo-500 text-white dark:bg-indigo-500/80 dark:text-white'
+                          : item.type === 'vacation'
+                              ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/30 dark:text-emerald-200'
+                              : item.type === 'unavailable'
+                                ? 'bg-rose-100 text-rose-700 dark:bg-rose-500/30 dark:text-rose-200'
+                                : 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/30 dark:text-indigo-200'
+                        const label = (() => {
+                          if (item.type === 'vacation') {
+                            return '休み'
+                          }
+                          if (item.type === 'unavailable') {
+                            return '不可'
+                          }
+                          if (item.reason) {
+                            return item.reason.length > 12
+                              ? `${item.reason.slice(0, 11)}…`
+                              : item.reason
+                          }
+                          if (item.start_at || item.end_at) {
+                            return `${item.start_at ?? '--:--'}〜${item.end_at ?? '--:--'}`
+                          }
+                          return '希望'
+                        })()
+                        const key =
+                          item.id > 0
+                            ? `${item.id}-${item.user_id ?? ''}`
+                            : `draft-${item.user_id}-${item.work_date}`
                         return (
                           <span
-                            key={item.id}
+                            key={key}
                             className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${tone}`}
                           >
-                            {item.type === 'wish' ? '希望' : item.type === 'vacation' ? '休暇' : '不可'}
+                            {label}
+                            {isDraft ? '（下書き）' : ''}
                           </span>
                         )
                       })}
@@ -1128,6 +1460,31 @@ const AvailabilityRequestPage = () => {
             <p className="text-xs text-slate-500">日付を選択すると既存申請が表示されます。</p>
           )}
 
+          {draftForActiveDate ? (
+            <div className="mt-3 rounded-2xl border border-indigo-200/60 bg-indigo-50/60 p-4 text-xs text-indigo-700 dark:border-indigo-500/40 dark:bg-indigo-500/20 dark:text-indigo-200">
+              <p className="font-semibold">未送信の申請案</p>
+              {draftSummaryText ? <p className="mt-1 text-sm font-semibold">{draftSummaryText}</p> : null}
+              <p className="text-[11px] text-indigo-500/80 dark:text-indigo-200/80">
+                カレンダー下の送信ボタンから申請できます。
+              </p>
+            </div>
+          ) : null}
+
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-500 dark:text-slate-400">
+            <p>
+              希望内容を設定したあと、「この内容で申請する」を押してください。
+              {pendingDraftCount > 0 ? `（未送信 ${pendingDraftCount} 件）` : ''}
+            </p>
+            <button
+              type="button"
+              onClick={handleConfirmSubmission}
+              disabled={isSubmitting || pendingDraftCount === 0}
+              className="rounded-full bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-60"
+            >
+              {isSubmitting ? '送信中…' : 'この内容で申請する'}
+            </button>
+          </div>
+
           <p className="text-xs text-slate-400">
             ※ ポップアップでは「早番／日勤／遅番／夜勤／休み」やカスタム時間を選択できます。
           </p>
@@ -1144,7 +1501,7 @@ const AvailabilityRequestPage = () => {
       </section>
     </div>
 
-    {popoverPosition
+    {popoverStyle
         ? createPortal(
             <div className="fixed inset-0 z-50">
               <div
@@ -1152,11 +1509,12 @@ const AvailabilityRequestPage = () => {
                 onClick={closePopover}
               />
               <div
-                className="absolute z-50 w-[min(320px,calc(100vw-32px))] rounded-2xl border border-white/30 bg-white/95 p-4 shadow-2xl backdrop-blur-lg dark:border-slate-700/60 dark:bg-slate-900/95"
+                ref={popoverRef}
+                className="absolute z-50 max-h-[min(80vh,520px)] w-[min(360px,calc(100vw-32px))] overflow-y-auto rounded-2xl border border-white/30 bg-white/95 p-4 shadow-2xl backdrop-blur-lg dark:border-slate-700/60 dark:bg-slate-900/95"
                 style={{
-                  left: popoverPosition.left,
-                  top: popoverPosition.top,
-                  width: popoverPosition.width,
+                  left: popoverStyle.left,
+                  top: popoverStyle.top,
+                  width: popoverStyle.width,
                 }}
                 onClick={(event) => event.stopPropagation()}
               >
@@ -1206,7 +1564,6 @@ const AvailabilityRequestPage = () => {
 
                 <div className="mt-4 grid grid-cols-2 gap-2 text-sm">
                   {(['EARLY', 'DAY', 'LATE', 'NIGHT'] as const).map((code) => {
-                    const times = getShiftTimes(code)
                     return (
                       <button
                         key={code}
@@ -1242,14 +1599,22 @@ const AvailabilityRequestPage = () => {
                     <input
                       type="time"
                       value={startAt}
-                      onChange={(event) => setStartAt(event.target.value)}
+                      onChange={(event) => {
+                        const value = event.target.value
+                        setStartAt(value)
+                        updateDraftSelection({ start_at: value ? value : null })
+                      }}
                       className="w-full rounded-md border border-slate-200/70 bg-white/90 px-2 py-1 text-xs text-slate-700 focus:border-indigo-400 focus:outline-none dark:border-slate-600 dark:bg-slate-800/80 dark:text-slate-200"
                     />
                     <span className="text-xs text-slate-400">〜</span>
                     <input
                       type="time"
                       value={endAt}
-                      onChange={(event) => setEndAt(event.target.value)}
+                      onChange={(event) => {
+                        const value = event.target.value
+                        setEndAt(value)
+                        updateDraftSelection({ end_at: value ? value : null })
+                      }}
                       className="w-full rounded-md border border-slate-200/70 bg-white/90 px-2 py-1 text-xs text-slate-700 focus:border-indigo-400 focus:outline-none dark:border-slate-600 dark:bg-slate-800/80 dark:text-slate-200"
                     />
                   </div>
@@ -1257,7 +1622,11 @@ const AvailabilityRequestPage = () => {
                     <span>メモ（任意）</span>
                     <textarea
                       value={reason}
-                      onChange={(event) => setReason(event.target.value)}
+                      onChange={(event) => {
+                        const value = event.target.value
+                        setReason(value)
+                        updateDraftSelection({ reason: value ? value : null })
+                      }}
                       rows={2}
                       className="w-full rounded-md border border-slate-200/70 bg-white/90 px-2 py-1 text-xs text-slate-700 focus:border-indigo-400 focus:outline-none dark:border-slate-600 dark:bg-slate-800/80 dark:text-slate-200"
                       placeholder="通院のため 14:00 まで勤務希望 など"
@@ -1265,15 +1634,18 @@ const AvailabilityRequestPage = () => {
                   </label>
                   <button
                     type="button"
-                    onClick={handleSubmitCustom}
-                    disabled={isSubmitting}
-                    className="w-full rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-60"
+                    onClick={applyCustomTime}
+                    className="w-full rounded-md border border-indigo-200/70 bg-indigo-50/80 px-3 py-2 text-sm font-semibold text-indigo-600 transition hover:border-indigo-300 hover:bg-indigo-100 dark:border-indigo-500/40 dark:bg-indigo-500/20 dark:text-indigo-200 dark:hover:border-indigo-400 dark:hover:bg-indigo-500/30"
                   >
-                    {isSubmitting ? '送信中…' : 'カスタム時間で登録'}
+                    カスタム時間を適用
                   </button>
                 </div>
 
                 {error ? <p className="mt-3 text-xs text-rose-500">{error}</p> : null}
+
+                <p className="mt-4 text-[11px] text-slate-400 dark:text-slate-500">
+                  設定した内容はカレンダー下部の送信ボタンから申請できます。
+                </p>
               </div>
             </div>,
             document.body
@@ -1282,28 +1654,5 @@ const AvailabilityRequestPage = () => {
     </>
   )
 }
-
-type DeadlineStatProps = {
-  title: string
-  value: string
-  helper: string
-  tone?: 'info' | 'warning' | 'success'
-}
-
-const toneClasses: Record<NonNullable<DeadlineStatProps['tone']>, string> = {
-  info: 'border-indigo-100 bg-indigo-50 text-indigo-600',
-  warning: 'border-amber-100 bg-amber-50 text-amber-600',
-  success: 'border-emerald-100 bg-emerald-50 text-emerald-600',
-}
-
-const DeadlineStat = ({ title, value, helper, tone = 'info' }: DeadlineStatProps) => (
-  <div className="space-y-2">
-    <p className="text-xs font-semibold uppercase tracking-widest text-slate-500">{title}</p>
-    <div className={`rounded-2xl border px-4 py-3 text-sm font-semibold ${toneClasses[tone]}`}>
-      {value}
-    </div>
-    <p className="text-xs text-slate-500">{helper}</p>
-  </div>
-)
 
 export default AvailabilityRequestPage

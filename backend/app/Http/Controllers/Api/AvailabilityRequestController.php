@@ -15,6 +15,8 @@ use App\Services\AvailabilityScheduleService;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 
 class AvailabilityRequestController extends Controller
 {
@@ -144,6 +146,12 @@ class AvailabilityRequestController extends Controller
 
         $refresh = $service->compute($periodData['period']);
 
+        $reminderMessage = AvailabilityReminderTask::query()
+            ->where('unit_id', $unit->id)
+            ->where('period', $periodData['period'])
+            ->orderByDesc('created_at')
+            ->value('message');
+
         AvailabilityReminderTask::query()
             ->where('unit_id', $unit->id)
             ->where('period', $periodData['period'])
@@ -152,6 +160,8 @@ class AvailabilityRequestController extends Controller
                 'status' => 'sent',
                 'triggered_at' => CarbonImmutable::now(),
             ]);
+
+        $this->sendSlackReminder($unit, $periodData['period'], $reminderMessage);
 
         return response()->json([
             'data' => $refresh,
@@ -184,6 +194,29 @@ class AvailabilityRequestController extends Controller
     private function defaultScopeFor($user): string
     {
         return in_array($user->role, [UserRole::Admin, UserRole::Leader], true) ? 'unit' : 'self';
+    }
+
+    private function sendSlackReminder(Unit $unit, string $period, ?string $message = null): void
+    {
+        $webhookUrl = $unit->organization->settings['availability']['slack_webhook_url'] ?? null;
+
+        if (! $webhookUrl) {
+            return;
+        }
+
+        $payload = [
+            'text' => $message ?? sprintf('%s の希望・休暇申請が未提出の方は提出をお願いします。', $period),
+        ];
+
+        try {
+            Http::post($webhookUrl, $payload);
+        } catch (\Throwable $e) {
+            Log::error('Failed to send Slack availability reminder', [
+                'unit_id' => $unit->id,
+                'period' => $period,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 
     private function resolveTargetUser(User $actor, Unit $unit, int $targetUserId): User

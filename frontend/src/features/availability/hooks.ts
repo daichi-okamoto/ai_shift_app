@@ -17,6 +17,8 @@ export const useAvailabilityRequestsQuery = (
     queryKey: ['availability', unitId, 'requests', params],
     queryFn: () => fetchAvailabilityRequests(unitId, params),
     enabled: Number.isFinite(unitId),
+    placeholderData: (previousData) => previousData,
+    keepPreviousData: true,
   })
 
 export const useAvailabilityScheduleQuery = (unitId: number, period?: string) =>
@@ -24,6 +26,8 @@ export const useAvailabilityScheduleQuery = (unitId: number, period?: string) =>
     queryKey: ['availability', unitId, 'schedule', period ?? 'upcoming'],
     queryFn: () => fetchAvailabilitySchedule(unitId, period),
     enabled: Number.isFinite(unitId),
+    placeholderData: (previousData) => previousData,
+    keepPreviousData: true,
   })
 
 export const useAvailabilityRemindersQuery = (unitId: number, enabled = true) =>
@@ -60,7 +64,7 @@ export const useSendAvailabilityReminderMutation = (unitId: number, period?: str
 export const useCreateAvailabilityReminderMutation = (unitId: number) => {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (payload: { period: string; scheduled_for: string }) =>
+    mutationFn: (payload: { period: string; scheduled_for: string; message?: string }) =>
       createAvailabilityReminder(unitId, payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['availability', unitId, 'reminders'] })

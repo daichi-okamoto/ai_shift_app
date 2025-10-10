@@ -6,6 +6,7 @@ use App\Models\AvailabilityReminderTask;
 use App\Services\AvailabilityScheduleService;
 use Carbon\CarbonImmutable;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 class SendScheduledAvailabilityReminders extends Command
@@ -55,6 +56,8 @@ class SendScheduledAvailabilityReminders extends Command
 
             try {
                 $service->markReminderSent($periodData['period'], CarbonImmutable::now($timezone));
+                $this->sendSlackReminder($task->message, $task->unit->organization->settings['availability']['slack_webhook_url'] ?? null);
+
                 $task->update([
                     'status' => 'sent',
                     'triggered_at' => CarbonImmutable::now(),
@@ -78,5 +81,24 @@ class SendScheduledAvailabilityReminders extends Command
         $this->info(sprintf('Processed %d reminder task(s).', $processed));
 
         return self::SUCCESS;
+    }
+
+    private function sendSlackReminder(?string $message, ?string $webhookUrl): void
+    {
+        if (! $webhookUrl) {
+            return;
+        }
+
+        $payload = [
+            'text' => $message ?? '希望・休暇申請のリマインドを送信しました。',
+        ];
+
+        try {
+            Http::post($webhookUrl, $payload);
+        } catch (\Throwable $e) {
+            Log::error('Failed to notify Slack about availability reminder', [
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 }

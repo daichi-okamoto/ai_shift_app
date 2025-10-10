@@ -17,6 +17,7 @@ class AvailabilityReminderTaskResource extends JsonResource
             'unit_id' => $this->unit_id,
             'period' => $this->period,
             'scheduled_for' => $this->scheduled_for?->toDateString(),
+            'message' => $this->message,
             'status' => $this->status,
             'triggered_at' => $this->triggered_at?->toIso8601String(),
             'created_at' => $this->created_at?->toIso8601String(),

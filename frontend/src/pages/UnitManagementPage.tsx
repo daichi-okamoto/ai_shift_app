@@ -13,6 +13,29 @@ import {
 } from '../features/units/hooks'
 import { useEmployeesQuery } from '../features/employees/hooks'
 import type { Unit } from '../api/types'
+import { compareMembersByDisplayOrder, sortMembersByDisplayOrder } from '../utils/memberSort'
+
+const orderMembersWithReference = <T extends { id: number; display_order?: number | null }>(
+  members: T[],
+  reference: number[],
+) => {
+  if (!reference.length) {
+    return sortMembersByDisplayOrder(members)
+  }
+
+  const orderMap = new Map(reference.map((id, index) => [id, index]))
+
+  return members.slice().sort((a, b) => {
+    const idxA = orderMap.get(a.id)
+    const idxB = orderMap.get(b.id)
+    if (idxA !== undefined || idxB !== undefined) {
+      if (idxA === undefined) return 1
+      if (idxB === undefined) return -1
+      if (idxA !== idxB) return idxA - idxB
+    }
+    return compareMembersByDisplayOrder(a, b)
+  })
+}
 
 const defaultCoverage = { early: '1', day: '1', late: '1', night: '1' }
 
@@ -92,7 +115,7 @@ const UnitManagementPage = () => {
   )
 
   const mapMembershipToDraft = useCallback(
-    (member: { id: number; name: string; role: string }) => {
+    (member: { id: number; name: string; role: string; display_order?: number | null }) => {
       const employee = employees.find((candidate) => candidate.id === member.id)
       const allowedShifts = (employee?.allowed_shift_types ?? [])
         .filter((type) => {
@@ -118,6 +141,9 @@ const UnitManagementPage = () => {
     updateMembershipsMutation.reset()
   }, [selectedUnitId, updateMembershipsMutation])
 
+  const [memberOrderReference, setMemberOrderReference] = useState<number[]>([])
+  const [manualOrderActive, setManualOrderActive] = useState(false)
+
   const syncUnitForm = useCallback(
     (unit: Unit | null) => {
       if (!unit) {
@@ -125,6 +151,8 @@ const UnitManagementPage = () => {
         setUnitCode('')
         setCoverage({ ...defaultCoverage })
         setMembersDraft([])
+        setMemberOrderReference([])
+        setManualOrderActive(false)
         return
       }
 
@@ -137,10 +165,22 @@ const UnitManagementPage = () => {
         night: String(unit.coverage_requirements.night ?? 0),
       })
 
-      const mappedMembers = (unit.members ?? []).map((member) => mapMembershipToDraft(member))
+      const shouldRespectManualOrder =
+        manualOrderActive && memberOrderReference.length > 0 && selectedUnitId === unit.id
+
+      const orderedMembers = shouldRespectManualOrder
+        ? orderMembersWithReference(unit.members ?? [], memberOrderReference)
+        : sortMembersByDisplayOrder(unit.members ?? [])
+
+      if (!shouldRespectManualOrder) {
+        setMemberOrderReference(orderedMembers.map((member) => member.id))
+        setManualOrderActive(false)
+      }
+
+      const mappedMembers = orderedMembers.map((member) => mapMembershipToDraft(member))
       setMembersDraft(mappedMembers)
     },
-    [mapMembershipToDraft],
+    [manualOrderActive, mapMembershipToDraft, memberOrderReference, selectedUnitId],
   )
 
   useEffect(() => {
@@ -283,11 +323,13 @@ const UnitManagementPage = () => {
             .map((type) => ({ code: (type.code ?? '').toUpperCase(), name: type.name })) ?? [],
       },
     ])
+    setMemberOrderReference((prev) => [...prev, employee.id])
     setSelectedEmployeeId('')
   }
 
   const handleRemoveMember = (userId: number) => {
     setMembersDraft((prev) => prev.filter((member) => member.user_id !== userId))
+    setMemberOrderReference((prev) => prev.filter((id) => id !== userId))
   }
 
   const handleSaveMemberships = async () => {
@@ -305,8 +347,26 @@ const UnitManagementPage = () => {
     try {
       const updatedUnit = await updateMembershipsMutation.mutateAsync(normalized)
       if (updatedUnit?.members) {
+        const referenceOrder = memberOrderReference.length
+          ? memberOrderReference
+          : membersDraft.map((member) => member.user_id)
+
+        const orderMap = new Map(referenceOrder.map((id, index) => [id, index]))
+        const sortedMembers = updatedUnit.members.slice().sort((a, b) => {
+          const idxA = orderMap.get(a.id)
+          const idxB = orderMap.get(b.id)
+          if (idxA !== undefined || idxB !== undefined) {
+            if (idxA === undefined) return 1
+            if (idxB === undefined) return -1
+            if (idxA !== idxB) return idxA - idxB
+          }
+          return compareMembersByDisplayOrder(a, b)
+        })
+
+        setMemberOrderReference(sortedMembers.map((member) => member.id))
+
         setMembersDraft(
-          updatedUnit.members.map((member) => {
+          sortedMembers.map((member) => {
             const employee = employees.find((candidate) => candidate.id === member.id)
             const allowedShifts = (employee?.allowed_shift_types ?? [])
               .filter((type) => {
@@ -548,18 +608,20 @@ const UnitManagementPage = () => {
                 </button>
               </div>
               <SortableList
-            items={membersDraft.map((member) => member.user_id)}
-            onReorder={(ids) => {
-              const order = ids.map((value) => Number(value))
-              setMembersDraft((prev) => {
-                const map = new Map(prev.map((member) => [member.user_id, member]))
-                return order
-                  .map((id) => map.get(id))
-                  .filter((member): member is MemberDraft => Boolean(member))
-              })
-            }}
-            disabled={!canManageMemberships || updateMembershipsMutation.isPending}
-          >
+                items={membersDraft.map((member) => member.user_id)}
+                onReorder={(ids) => {
+                  const order = ids.map((value) => Number(value))
+                  setMemberOrderReference(order)
+                  setManualOrderActive(true)
+                  setMembersDraft((prev) => {
+                    const map = new Map(prev.map((member) => [member.user_id, member]))
+                    return order
+                      .map((id) => map.get(id))
+                      .filter((member): member is MemberDraft => Boolean(member))
+                  })
+                }}
+                disabled={!canManageMemberships || updateMembershipsMutation.isPending}
+              >
             <div className="space-y-3">
               {membersDraft.map((member) => (
                 <SortableItem

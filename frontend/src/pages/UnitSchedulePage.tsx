@@ -8,6 +8,7 @@ import type { Holiday } from '@holiday-jp/holiday_jp/lib/types'
 import { api } from '../api/client'
 import type { Assignment, Shift, ShiftType, UnitMember } from '../api/types'
 import LoadingScreen from '../components/LoadingScreen'
+import { sortMembersByDisplayOrder } from '../utils/memberSort'
 import {
   useBatchUpdateShifts,
   useDeleteShiftsRange,
@@ -247,6 +248,7 @@ type AutoGenerateOptions = {
   forbidLateToEarly: boolean
   limitFulltimeRepeat: boolean
   balanceWorkload: boolean
+  equalizeShiftCounts: boolean
   maxNightsPerMember: number
   maxConsecutiveWorkdays: number
   desiredDayHeadcount: number
@@ -262,6 +264,7 @@ const BASE_AUTO_GENERATE_OPTIONS: AutoGenerateOptions = {
   forbidLateToEarly: true,
   limitFulltimeRepeat: true,
   balanceWorkload: true,
+  equalizeShiftCounts: false,
   maxNightsPerMember: 7,
   maxConsecutiveWorkdays: 5,
   desiredDayHeadcount: 1,
@@ -593,9 +596,14 @@ const UnitSchedulePage = () => {
   const members = useMemo<UnitMember[]>(() => {
     const metaMembers = ((data?.meta as { members?: UnitMember[] } | undefined)?.members ?? []) as UnitMember[]
     if (metaMembers.length > 0) {
-      return metaMembers
+      return sortMembersByDisplayOrder(metaMembers)
     }
-    return unitDetail?.members ?? []
+
+    if (unitDetail?.members) {
+      return sortMembersByDisplayOrder(unitDetail.members as UnitMember[])
+    }
+
+    return []
   }, [data?.meta, unitDetail])
 
   const {
@@ -1193,22 +1201,28 @@ const UnitSchedulePage = () => {
     try {
       const desiredDayHeadcount = Math.max(1, Math.round(autoGenOptions.desiredDayHeadcount))
 
+      const constraints: Record<string, unknown> = {
+        enforce_night_after_rest: autoGenOptions.enforceNightAfterRest,
+        forbid_late_to_early: autoGenOptions.forbidLateToEarly,
+        limit_fulltime_repeat: autoGenOptions.limitFulltimeRepeat,
+        balance_workload: autoGenOptions.balanceWorkload,
+        max_nights_per_member: autoGenOptions.maxNightsPerMember,
+        max_consecutive_workdays: autoGenOptions.maxConsecutiveWorkdays,
+        desired_day_headcount: desiredDayHeadcount,
+        enforce_night_rest_pairing: autoGenOptions.enforceNightRestPairing,
+        min_off_days: autoGenOptions.minOffDaysFullTime,
+        min_off_days_full_time: autoGenOptions.minOffDaysFullTime,
+        min_off_days_part_time: autoGenOptions.minOffDaysPartTime,
+        time_limit: autoGenOptions.timeLimit,
+      }
+
+      if (autoGenOptions.equalizeShiftCounts) {
+        constraints.equalize_shift_counts = true
+      }
+
       const payload: Record<string, unknown> = {
         month: monthKey,
-        constraints: {
-          enforce_night_after_rest: autoGenOptions.enforceNightAfterRest,
-          forbid_late_to_early: autoGenOptions.forbidLateToEarly,
-          limit_fulltime_repeat: autoGenOptions.limitFulltimeRepeat,
-          balance_workload: autoGenOptions.balanceWorkload,
-          max_nights_per_member: autoGenOptions.maxNightsPerMember,
-          max_consecutive_workdays: autoGenOptions.maxConsecutiveWorkdays,
-          desired_day_headcount: desiredDayHeadcount,
-          enforce_night_rest_pairing: autoGenOptions.enforceNightRestPairing,
-          min_off_days: autoGenOptions.minOffDaysFullTime,
-          min_off_days_full_time: autoGenOptions.minOffDaysFullTime,
-          min_off_days_part_time: autoGenOptions.minOffDaysPartTime,
-          time_limit: autoGenOptions.timeLimit,
-        },
+        constraints,
         preserve_existing: autoGenOptions.preserveExisting,
       }
 
@@ -1953,13 +1967,6 @@ const UnitSchedulePage = () => {
             <div className="flex flex-wrap items-center justify-start gap-2 lg:justify-end">
               <button
                 type="button"
-                onClick={() => setShowAutoGenerate(true)}
-                className="rounded-full border border-indigo-200/60 bg-white/60 px-4 py-2 text-sm font-semibold text-indigo-600 backdrop-blur transition hover:bg-indigo-50/80 dark:border-indigo-500/50 dark:bg-slate-900/50 dark:text-indigo-200 dark:hover:bg-indigo-500/25"
-              >
-                自動シフト作成
-              </button>
-              <button
-                type="button"
                 onClick={handleExport}
                 disabled={isExporting}
                 className="rounded-full border border-emerald-200/60 bg-emerald-50/70 px-4 py-2 text-sm font-semibold text-emerald-600 backdrop-blur transition hover:bg-emerald-100/80 disabled:opacity-60 dark:border-emerald-500/50 dark:bg-emerald-500/25 dark:text-emerald-200 dark:hover:bg-emerald-500/35"
@@ -1975,59 +1982,6 @@ const UnitSchedulePage = () => {
             </div>
           </div>
 
-          <div className="mt-6 flex flex-wrap items-center gap-3">
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="flex rounded-full border border-white/40 bg-white/60 p-1 text-xs font-semibold text-slate-500 backdrop-blur dark:border-slate-700/60 dark:bg-slate-900/40 dark:text-slate-200">
-                {(
-                  [
-                    { value: 'day', label: '日' },
-                    { value: 'week', label: '週' },
-                    { value: 'month', label: '月' },
-                  ] as const
-                ).map((option) => (
-                  <button
-                    key={option.value}
-                    type="button"
-                    onClick={() => handleViewModeChange(option.value)}
-                    className={`rounded-full px-4 py-1.5 transition ${
-                      viewMode === option.value
-                        ? 'bg-indigo-500/20 text-indigo-600 shadow-sm shadow-indigo-200/40 dark:bg-indigo-500/35 dark:text-indigo-100'
-                        : 'hover:bg-white/40 hover:text-slate-700 dark:hover:bg-slate-800/40 dark:hover:text-slate-200'
-                    }`}
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
-              {viewMode !== 'month' ? (
-                <label className="flex items-center gap-2 rounded-full border border-white/40 bg-white/60 px-3 py-1 text-xs text-slate-600 backdrop-blur dark:border-slate-700/60 dark:bg-slate-900/40 dark:text-slate-200">
-                  <span>{viewMode === 'day' ? '表示日' : '週の開始日'}</span>
-                  <input
-                    type="date"
-                    value={anchorInputValue}
-                    onChange={handleAnchorInputChange}
-                    className="rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-600 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-200 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:focus:border-indigo-500 dark:focus:ring-indigo-500/40"
-                  />
-                </label>
-              ) : null}
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => handleNavigate(-1)}
-                  className="rounded-full border border-white/40 bg-white/60 px-4 py-2 text-sm text-slate-600 backdrop-blur transition hover:bg-white/80 hover:text-indigo-600 dark:border-slate-700/60 dark:bg-slate-900/40 dark:text-slate-200 dark:hover:bg-slate-900/60 dark:hover:text-indigo-200"
-                >
-                  {navigationLabels.prev}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleNavigate(1)}
-                  className="rounded-full border border-white/40 bg-white/60 px-4 py-2 text-sm text-slate-600 backdrop-blur transition hover:bg-white/80 hover:text-indigo-600 dark:border-slate-700/60 dark:bg-slate-900/40 dark:text-slate-200 dark:hover:bg-slate-900/60 dark:hover:text-indigo-200"
-                >
-                  {navigationLabels.next}
-                </button>
-              </div>
-            </div>
-          </div>
         </section>
 
       <div className="glass-panel flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/20 px-4 py-3 text-slate-600 dark:border-slate-700/60 dark:text-slate-300">
@@ -2163,6 +2117,66 @@ const UnitSchedulePage = () => {
               : 'p-1'
           }`}
         >
+          {!isFullscreen ? (
+            <div className="mb-3 flex flex-wrap items-center justify-end gap-3 pr-2 text-sm text-slate-600 dark:text-slate-300">
+              <button
+                type="button"
+                onClick={() => setShowAutoGenerate(true)}
+                className="rounded-full border border-indigo-200/60 bg-white/60 px-4 py-2 text-sm font-semibold text-indigo-600 backdrop-blur transition hover:bg-indigo-50/80 dark:border-indigo-500/50 dark:bg-slate-900/50 dark:text-indigo-200 dark:hover:bg-indigo-500/25"
+              >
+                自動シフト作成
+              </button>
+              <div className="flex rounded-full border border-white/40 bg-white/60 p-1 text-xs font-semibold text-slate-500 backdrop-blur dark:border-slate-700/60 dark:bg-slate-900/40 dark:text-slate-200">
+                {(
+                  [
+                    { value: 'day', label: '日' },
+                    { value: 'week', label: '週' },
+                    { value: 'month', label: '月' },
+                  ] as const
+                ).map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => handleViewModeChange(option.value)}
+                    className={`rounded-full px-4 py-1.5 transition ${
+                      viewMode === option.value
+                        ? 'bg-indigo-500/20 text-indigo-600 shadow-sm shadow-indigo-200/40 dark:bg-indigo-500/35 dark:text-indigo-100'
+                        : 'hover:bg-white/40 hover:text-slate-700 dark:hover:bg-slate-800/40 dark:hover:text-slate-200'
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              {viewMode !== 'month' ? (
+                <label className="flex items-center gap-2 rounded-full border border-white/40 bg-white/60 px-3 py-1 text-xs text-slate-600 backdrop-blur dark:border-slate-700/60 dark:bg-slate-900/40 dark:text-slate-200">
+                  <span>{viewMode === 'day' ? '表示日' : '週の開始日'}</span>
+                  <input
+                    type="date"
+                    value={anchorInputValue}
+                    onChange={handleAnchorInputChange}
+                    className="rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-600 focus:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-200 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:focus:border-indigo-500 dark:focus:ring-indigo-500/40"
+                  />
+                </label>
+              ) : null}
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleNavigate(-1)}
+                  className="rounded-full border border-white/40 bg-white/60 px-4 py-2 text-sm text-slate-600 backdrop-blur transition hover:bg-white/80 hover:text-indigo-600 dark:border-slate-700/60 dark:bg-slate-900/40 dark:text-slate-200 dark:hover:bg-slate-900/60 dark:hover:text-indigo-200"
+                >
+                  {navigationLabels.prev}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleNavigate(1)}
+                  className="rounded-full border border-white/40 bg-white/60 px-4 py-2 text-sm text-slate-600 backdrop-blur transition hover:bg-white/80 hover:text-indigo-600 dark:border-slate-700/60 dark:bg-slate-900/40 dark:text-slate-200 dark:hover:bg-slate-900/60 dark:hover:text-indigo-200"
+                >
+                  {navigationLabels.next}
+                </button>
+              </div>
+            </div>
+          ) : null}
           <button
             type="button"
             onClick={() => setIsFullscreen((prev) => !prev)}
@@ -2579,9 +2593,27 @@ const UnitSchedulePage = () => {
                   }
                 />
                 <span>
-                  <span className="block">公平ポイントをなるべく均等に配分</span>
+                  <span className="block">ポイントをなるべく均等に配分</span>
                   <span className="block text-xs text-slate-500 dark:text-slate-400">
                     夜勤・週末・祝日ポイントや勤務回数の偏りを抑える制約を加えます。
+                  </span>
+                </span>
+              </label>
+              <label className="flex items-start gap-2">
+                <input
+                  type="checkbox"
+                  checked={autoGenOptions.equalizeShiftCounts}
+                  onChange={() =>
+                    setAutoGenOptions((prev) => ({
+                      ...prev,
+                      equalizeShiftCounts: !prev.equalizeShiftCounts,
+                    }))
+                  }
+                />
+                <span>
+                  <span className="block">各シフトの回数をなるべく均等に配分</span>
+                  <span className="block text-xs text-slate-400 dark:text-slate-500">
+                    早番・日勤・遅番・夜勤の割当数の偏りを抑えます。
                   </span>
                 </span>
               </label>

@@ -71,7 +71,7 @@ export const fetchAvailabilityReminders = async (
 
 export const createAvailabilityReminder = async (
   unitId: number,
-  payload: { period: string; scheduled_for: string },
+  payload: { period: string; scheduled_for: string; message?: string },
 ): Promise<AvailabilityReminderTask> => {
   const { data } = await api.post<AvailabilityReminderTaskResponse>(
     `/units/${unitId}/availability-reminders`,
